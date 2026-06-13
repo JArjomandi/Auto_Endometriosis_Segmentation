@@ -7,9 +7,13 @@ output_root: "F:/Results/SAM_Benchmarking/ENID/SAM2/frozen"
 
 splits:
   - val
+  - test
 
 prompt_modes:
+  - GT_point
   - GT_box
+  - GT_box_point
+  - GT_box_posneg
 
 save:
   instance_masks: true
