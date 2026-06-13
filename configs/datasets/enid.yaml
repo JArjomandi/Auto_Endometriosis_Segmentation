@@ -1,0 +1,18 @@
+dataset_name: ENID
+dataset_root: "F:/Datasets/Standardized datasets/ENID/ENID 60_20_20 Split"
+
+splits:
+  train:
+    images: "train/images"
+    masks: "train/masks"
+    prompts: "oracle_prompts/ENID_train_oracle_prompts.csv"
+
+  val:
+    images: "val/images"
+    masks: "val/masks"
+    prompts: "oracle_prompts/ENID_val_oracle_prompts.csv"
+
+  test:
+    images: "test/images"
+    masks: "test/masks"
+    prompts: "oracle_prompts/ENID_test_oracle_prompts.csv"

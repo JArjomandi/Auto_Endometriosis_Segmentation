@@ -1,0 +1,17 @@
+experiment_name: "ENID_SAM2_Frozen_OraclePrompts"
+
+dataset_config: "configs/datasets/enid.yaml"
+model_config: "configs/models/sam2_frozen.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/ENID/SAM2/frozen"
+
+splits:
+  - val
+
+prompt_modes:
+  - GT_box
+
+save:
+  instance_masks: true
+  merged_masks: true
+  overlays: true
