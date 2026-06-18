@@ -1,0 +1,18 @@
+experiment_name: "GLENDA_MedSAM_Frozen_OracleBox"
+
+dataset_config: "configs/datasets/glenda.yaml"
+model_config: "configs/models/medsam_frozen.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA/MedSAM/frozen"
+
+splits:
+  - val
+  - test
+
+prompt_modes:
+  - GT_box
+
+save:
+  instance_masks: true
+  merged_masks: true
+  overlays: true
