@@ -15,8 +15,9 @@ from src.utils.visualization import save_overlay
 
 def load_yaml(path):
     path = Path(path)
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+
+    with open(path, "r", encoding="utf-8") as file:
+        return yaml.safe_load(file)
 
 
 def load_rgb_image(image_path: Path) -> np.ndarray:
@@ -30,20 +31,22 @@ def load_binary_mask(mask_path: Path) -> np.ndarray:
     return (mask_np > 0).astype(np.uint8) * 255
 
 
-def save_binary_mask(mask: np.ndarray, out_path: Path):
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(mask.astype(np.uint8)).save(out_path)
+def save_binary_mask(mask: np.ndarray, output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(mask.astype(np.uint8)).save(output_path)
 
 
 def find_image_path(images_dir: Path, image_name: str) -> Path:
-    path = images_dir / image_name
-    if path.exists():
-        return path
+    image_path = images_dir / image_name
+
+    if image_path.exists():
+        return image_path
 
     stem = Path(image_name).stem
 
-    for ext in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]:
-        candidate = images_dir / f"{stem}{ext}"
+    for extension in [".jpg", ".jpeg", ".png", ".tif", ".tiff"]:
+        candidate = images_dir / f"{stem}{extension}"
+
         if candidate.exists():
             return candidate
 
@@ -53,8 +56,9 @@ def find_image_path(images_dir: Path, image_name: str) -> Path:
 def find_mask_path(masks_dir: Path, image_name: str) -> Path:
     stem = Path(image_name).stem
 
-    for ext in [".png", ".jpg", ".jpeg", ".tif", ".tiff"]:
-        candidate = masks_dir / f"{stem}{ext}"
+    for extension in [".png", ".jpg", ".jpeg", ".tif", ".tiff"]:
+        candidate = masks_dir / f"{stem}{extension}"
+
         if candidate.exists():
             return candidate
 
@@ -85,12 +89,31 @@ def run_one_split(
     masks_dir = dataset_root / split_cfg["masks"]
     prompts_csv = dataset_root / split_cfg["prompts"]
 
+    if not images_dir.exists():
+        raise FileNotFoundError(f"Images folder not found: {images_dir}")
+
+    if not masks_dir.exists():
+        raise FileNotFoundError(f"Masks folder not found: {masks_dir}")
+
     if not prompts_csv.exists():
         raise FileNotFoundError(f"Prompt CSV not found: {prompts_csv}")
 
     prompts_df = pd.read_csv(prompts_csv)
 
+    required_columns = [
+        "image_name",
+        "bbox_x1",
+        "bbox_y1",
+        "bbox_x2",
+        "bbox_y2",
+    ]
+
+    for column in required_columns:
+        if column not in prompts_df.columns:
+            raise ValueError(f"Required column missing from prompt CSV: {column}")
+
     out_dir = output_root / prompt_mode / split_name
+
     instance_dir = out_dir / "instance_masks"
     merged_dir = out_dir / "merged_masks"
     overlay_dir = out_dir / "overlays"
@@ -104,7 +127,9 @@ def run_one_split(
 
     grouped = prompts_df.groupby("image_name", sort=False)
 
-    print(f"\nRunning {dataset_name} | {split_name} | MedSAM | {prompt_mode}")
+    print("\n" + "=" * 100)
+    print(f"Running {dataset_name} | {split_name} | MedSAM | {prompt_mode}")
+    print("=" * 100)
     print(f"Images:  {images_dir}")
     print(f"Masks:   {masks_dir}")
     print(f"Prompts: {prompts_csv}")
@@ -129,7 +154,7 @@ def run_one_split(
             box_xyxy = parse_box_from_row(row)
 
             start_time = time.perf_counter()
-            pred_mask, medsam_score = model.predict(box_xyxy)
+            pred_mask, mean_probability = model.predict(box_xyxy)
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
             if pred_mask.shape != gt_mask.shape:
@@ -147,24 +172,26 @@ def run_one_split(
             if save_cfg.get("instance_masks", True):
                 save_binary_mask(pred_mask, instance_path)
 
-            inference_rows.append({
-                "dataset": dataset_name,
-                "split": split_name,
-                "model_name": "MedSAM",
-                "training_state": "frozen",
-                "prompt_mode": prompt_mode,
-                "image_name": image_name,
-                "mask_name": Path(mask_path).name,
-                "lesion_id": lesion_id,
-                "bbox_x1": box_xyxy[0],
-                "bbox_y1": box_xyxy[1],
-                "bbox_x2": box_xyxy[2],
-                "bbox_y2": box_xyxy[3],
-                "bbox_xyxy": json.dumps(box_xyxy),
-                "medsam_score_mean_probability": medsam_score,
-                "inference_time_ms": elapsed_ms,
-                "instance_mask_name": instance_name,
-            })
+            inference_rows.append(
+                {
+                    "dataset": dataset_name,
+                    "split": split_name,
+                    "model_name": "MedSAM",
+                    "training_state": "frozen",
+                    "prompt_mode": prompt_mode,
+                    "image_name": image_name,
+                    "mask_name": Path(mask_path).name,
+                    "lesion_id": lesion_id,
+                    "bbox_x1": box_xyxy[0],
+                    "bbox_y1": box_xyxy[1],
+                    "bbox_x2": box_xyxy[2],
+                    "bbox_y2": box_xyxy[3],
+                    "bbox_xyxy": json.dumps(box_xyxy),
+                    "medsam_mean_probability": mean_probability,
+                    "inference_time_ms": elapsed_ms,
+                    "instance_mask_name": instance_name,
+                }
+            )
 
         merged_name = f"{Path(image_name).stem}.png"
         merged_path = merged_dir / merged_name
@@ -174,6 +201,7 @@ def run_one_split(
 
         if save_cfg.get("overlays", True):
             overlay_path = overlay_dir / f"{Path(image_name).stem}_overlay.png"
+
             save_overlay(
                 image_path=image_path,
                 gt_mask=gt_mask,
@@ -196,8 +224,8 @@ def run_one_split(
             "mask_name": Path(mask_path).name,
             "num_prompt_instances": int(len(image_prompts)),
         }
-        metric_row.update(metrics)
 
+        metric_row.update(metrics)
         metric_rows.append(metric_row)
 
     inference_df = pd.DataFrame(inference_rows)
@@ -211,7 +239,11 @@ def run_one_split(
     metrics_df.to_csv(metrics_csv, index=False)
 
     numeric_cols = metrics_df.select_dtypes(include="number").columns
-    summary_df = metrics_df[numeric_cols].agg(["mean", "std", "median", "min", "max"]).T
+
+    summary_df = metrics_df[numeric_cols].agg(
+        ["mean", "std", "median", "min", "max"]
+    ).T
+
     summary_df.to_csv(summary_csv)
 
     print(f"Saved inference CSV: {inference_csv}")
@@ -221,10 +253,9 @@ def run_one_split(
 
 def run_experiment(experiment_config_path):
     experiment_config_path = Path(experiment_config_path)
+    project_root = Path(__file__).resolve().parents[2]
 
     exp_cfg = load_yaml(experiment_config_path)
-
-    project_root = Path(__file__).resolve().parents[2]
 
     dataset_cfg_path = project_root / exp_cfg["dataset_config"]
     model_cfg_path = project_root / exp_cfg["model_config"]
@@ -236,6 +267,11 @@ def run_experiment(experiment_config_path):
     dataset_root = Path(dataset_cfg["dataset_root"])
     output_root = Path(exp_cfg["output_root"])
 
+    prompt_modes = exp_cfg.get("prompt_modes", ["GT_box"])
+
+    if prompt_modes != ["GT_box"]:
+        raise ValueError("MedSAM runner currently supports only prompt_modes: ['GT_box']")
+
     model = MedSAMFrozenWrapper(
         medsam_repo_root=model_cfg["medsam_repo_root"],
         checkpoint=model_cfg["checkpoint"],
@@ -244,12 +280,6 @@ def run_experiment(experiment_config_path):
     )
 
     save_cfg = exp_cfg.get("save", {})
-
-    prompt_modes = exp_cfg.get("prompt_modes", ["GT_box"])
-    if prompt_modes != ["GT_box"]:
-        raise ValueError(
-            "MedSAM runner currently supports only prompt_modes: ['GT_box']"
-        )
 
     for split_name in exp_cfg["splits"]:
         split_cfg = dataset_cfg["splits"][split_name]

@@ -19,15 +19,25 @@ CONFIGS_TO_RUN = [
     PROJECT_ROOT / "configs" / "experiments" / "glenda_medsam_frozen_oracle.yaml",
 ]
 
-# Example: run only ENID
+# Run only ENID:
 # CONFIGS_TO_RUN = [
 #     PROJECT_ROOT / "configs" / "experiments" / "enid_medsam_frozen_oracle.yaml",
 # ]
 
-# Example: run only GLENDA
+# Run only GLENDA:
 # CONFIGS_TO_RUN = [
 #     PROJECT_ROOT / "configs" / "experiments" / "glenda_medsam_frozen_oracle.yaml",
 # ]
+
+DATASETS_TO_VISUALIZE = [
+    "ENID",
+    "GLENDA",
+]
+
+SPLITS_TO_VISUALIZE = [
+    "val",
+    "test",
+]
 
 
 def main():
@@ -52,17 +62,23 @@ def main():
     print("Visualizing MedSAM metrics")
     print("=" * 100)
 
-    for dataset_name in ["ENID", "GLENDA"]:
-        for split in ["val", "test"]:
-            visualize_dataset_model_split(
-                results_root=RESULTS_ROOT,
-                dataset_name=dataset_name,
-                model_name="MedSAM",
-                training_state="frozen",
-                split=split,
-            )
+    for dataset_name in DATASETS_TO_VISUALIZE:
+        for split in SPLITS_TO_VISUALIZE:
+            try:
+                visualize_dataset_model_split(
+                    results_root=RESULTS_ROOT,
+                    dataset_name=dataset_name,
+                    model_name="MedSAM",
+                    training_state="frozen",
+                    split=split,
+                )
+            except Exception as error:
+                print(
+                    f"WARNING: Visualization failed for "
+                    f"{dataset_name} | {split}: {error}"
+                )
 
-    print("\nAll selected MedSAM experiments and visualizations finished.")
+    print("\nAll selected MedSAM experiments and metric visualizations finished.")
 
 
 if __name__ == "__main__":
