@@ -3,19 +3,24 @@ import argparse
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from openpyxl.styles import Font
 
 
 # ============================================================
 # Generic metric visualization and summary tables
+# Works for models with different available prompt modes.
 # ============================================================
 
 DEFAULT_RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 
-PROMPT_ORDER = [
+PREFERRED_PROMPT_ORDER = [
     "GT_point",
     "GT_box",
     "GT_box_point",
     "GT_box_posneg",
+    "No_prompt",
+    "Auto_box",
+    "Auto_mask",
 ]
 
 PROMPT_LABELS = {
@@ -23,10 +28,11 @@ PROMPT_LABELS = {
     "GT_box": "GT box",
     "GT_box_point": "GT box + point",
     "GT_box_posneg": "GT box + point + neg points",
+    "No_prompt": "No prompt",
+    "Auto_box": "Automatic box",
+    "Auto_mask": "Automatic mask",
 }
 
-# Only these metrics are plotted.
-# The Excel file will summarize all numeric columns it can find.
 METRICS_TO_PLOT = [
     "dice",
     "iou",
@@ -63,8 +69,61 @@ def metric_display_name(metric: str) -> str:
         "sam_score": "SAM score",
         "selected_mask_index": "Selected mask index",
         "num_prompt_instances": "Number of prompt instances",
+        "medsam_mean_probability": "MedSAM mean probability",
     }
     return names.get(metric, metric)
+
+
+def detect_available_prompt_modes(
+    results_root: Path,
+    dataset_name: str,
+    model_name: str,
+    training_state: str,
+    split: str,
+):
+    """
+    Auto-detect prompt/result folders that contain metrics_image_level.csv.
+
+    Example:
+      F:/Results/SAM_Benchmarking/ENID/MedSAM/frozen/GT_box/val/metrics_image_level.csv
+    """
+
+    base_dir = results_root / dataset_name / model_name / training_state
+
+    if not base_dir.exists():
+        raise FileNotFoundError(f"Results folder not found: {base_dir}")
+
+    detected = []
+
+    for child in base_dir.iterdir():
+        if not child.is_dir():
+            continue
+
+        if child.name == "visualize_metrics":
+            continue
+
+        metrics_csv = child / split / "metrics_image_level.csv"
+
+        if metrics_csv.exists():
+            detected.append(child.name)
+
+    ordered = []
+
+    for prompt_mode in PREFERRED_PROMPT_ORDER:
+        if prompt_mode in detected:
+            ordered.append(prompt_mode)
+
+    for prompt_mode in sorted(detected):
+        if prompt_mode not in ordered:
+            ordered.append(prompt_mode)
+
+    if not ordered:
+        raise RuntimeError(
+            f"No prompt/result folders with metrics_image_level.csv found for "
+            f"{dataset_name}/{model_name}/{training_state}/{split}"
+        )
+
+    return ordered
 
 
 def collect_csvs(
@@ -74,26 +133,22 @@ def collect_csvs(
     training_state: str,
     split: str,
 ):
-    """
-    Reads the prompt-specific result files:
-
-    F:/Results/SAM_Benchmarking/ENID/SAM2/frozen/GT_box/val/metrics_image_level.csv
-    F:/Results/SAM_Benchmarking/ENID/SAM2/frozen/GT_box/val/inference_results.csv
-
-    Returns:
-      image_metrics_df
-      inference_df
-    """
-
     base_dir = results_root / dataset_name / model_name / training_state
 
-    if not base_dir.exists():
-        raise FileNotFoundError(f"Results folder not found: {base_dir}")
+    prompt_modes = detect_available_prompt_modes(
+        results_root=results_root,
+        dataset_name=dataset_name,
+        model_name=model_name,
+        training_state=training_state,
+        split=split,
+    )
+
+    print(f"Detected result modes for {dataset_name} | {model_name} | {split}: {prompt_modes}")
 
     image_metric_dfs = []
     inference_dfs = []
 
-    for prompt_mode in PROMPT_ORDER:
+    for prompt_mode in prompt_modes:
         prompt_dir = base_dir / prompt_mode / split
 
         metrics_csv = prompt_dir / "metrics_image_level.csv"
@@ -110,8 +165,6 @@ def collect_csvs(
             df["source_table"] = "metrics_image_level"
             df["source_csv"] = str(metrics_csv)
             image_metric_dfs.append(df)
-        else:
-            print(f"WARNING: missing metrics CSV, skipping: {metrics_csv}")
 
         if inference_csv.exists():
             df = pd.read_csv(inference_csv)
@@ -124,8 +177,6 @@ def collect_csvs(
             df["source_table"] = "inference_results"
             df["source_csv"] = str(inference_csv)
             inference_dfs.append(df)
-        else:
-            print(f"WARNING: missing inference CSV, skipping: {inference_csv}")
 
     if not image_metric_dfs:
         raise RuntimeError(
@@ -140,7 +191,7 @@ def collect_csvs(
     else:
         inference_df = pd.DataFrame()
 
-    return image_metrics_df, inference_df
+    return image_metrics_df, inference_df, prompt_modes
 
 
 def make_prompt_comparison_boxplot(
@@ -151,16 +202,12 @@ def make_prompt_comparison_boxplot(
     model_name: str,
     training_state: str,
     split: str,
+    prompt_modes: list,
 ) -> Path:
-    available_prompt_modes = [
-        prompt for prompt in PROMPT_ORDER
-        if prompt in set(df["prompt_mode"].unique())
-    ]
-
     data = []
     labels = []
 
-    for prompt_mode in available_prompt_modes:
+    for prompt_mode in prompt_modes:
         values = df.loc[df["prompt_mode"] == prompt_mode, metric].dropna().values
 
         if len(values) == 0:
@@ -174,23 +221,23 @@ def make_prompt_comparison_boxplot(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(9, 5.5))
+    fig, ax = plt.subplots(figsize=(7.5, 5.0))
 
     box = ax.boxplot(
         data,
-        labels=labels,
+        tick_labels=labels,
         patch_artist=True,
         showmeans=True,
         meanline=True,
-        widths=0.35,
+        widths=0.28,
         medianprops={
             "color": "orange",
-            "linewidth": 2.5,
+            "linewidth": 2.8,
         },
         meanprops={
             "color": "red",
             "linestyle": "-",
-            "linewidth": 2.2,
+            "linewidth": 2.4,
         },
         boxprops={
             "linewidth": 1.2,
@@ -214,29 +261,28 @@ def make_prompt_comparison_boxplot(
     )
 
     for patch in box["boxes"]:
-        patch.set_facecolor("#BFDDF2")  # light blue
+        patch.set_facecolor("#BFDDF2")
 
     title = (
         f"{dataset_name} | {model_name} {training_state} | "
         f"{split} | {metric_display_name(metric)}"
     )
 
-    ax.set_title(title, fontsize=17, fontweight="bold")
-    ax.set_xlabel("Prompt mode", fontsize=15)
-    ax.set_ylabel(metric_display_name(metric), fontsize=15)
+    ax.set_title(title, fontsize=18, fontweight="bold")
+    ax.set_xlabel("Prompt / mode", fontsize=16)
+    ax.set_ylabel(metric_display_name(metric), fontsize=16)
 
-    ax.tick_params(axis="x", labelsize=13, rotation=15)
-    ax.tick_params(axis="y", labelsize=13)
+    ax.tick_params(axis="x", labelsize=14, rotation=15)
+    ax.tick_params(axis="y", labelsize=14)
 
     if metric in RATIO_METRICS:
         ax.set_ylim(0, 1.05)
 
     ax.grid(axis="y", alpha=0.25)
 
-    # Simple legend for line meanings.
-    ax.plot([], [], color="red", linewidth=2.2, label="Mean")
-    ax.plot([], [], color="orange", linewidth=2.5, label="Median")
-    ax.legend(fontsize=12, frameon=False, loc="best")
+    ax.plot([], [], color="red", linewidth=2.4, label="Mean")
+    ax.plot([], [], color="orange", linewidth=2.8, label="Median")
+    ax.legend(fontsize=13, frameon=False, loc="best")
 
     fig.tight_layout()
 
@@ -249,60 +295,47 @@ def make_prompt_comparison_boxplot(
     return out_path
 
 
-def summarize_numeric_columns(df: pd.DataFrame, source_table_name: str) -> pd.DataFrame:
-    """
-    Generates a long-format summary table.
-
-    Columns:
-      parameter
-      source_table
-      prompt_mode
-      n
-      min
-      max
-      Q1
-      Q3
-      median
-      mean
-
-    This includes every numeric column found in the dataframe.
-    """
-
+def summarize_numeric_columns(
+    df: pd.DataFrame,
+    source_table_name: str,
+    prompt_modes: list,
+) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
     excluded_numeric = {
-        # IDs are numeric but not meaningful as metrics.
         "lesion_id",
     }
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    numeric_cols = [c for c in numeric_cols if c not in excluded_numeric]
+    numeric_cols = [column for column in numeric_cols if column not in excluded_numeric]
 
     rows = []
 
     for parameter in numeric_cols:
-        for prompt_mode in PROMPT_ORDER:
+        for prompt_mode in prompt_modes:
             sub = df.loc[df["prompt_mode"] == prompt_mode, parameter].dropna()
 
             if len(sub) == 0:
                 continue
 
-            rows.append({
-                "parameter": parameter,
-                "parameter_display_name": metric_display_name(parameter),
-                "source_table": source_table_name,
-                "prompt_mode": prompt_mode,
-                "prompt_label": PROMPT_LABELS.get(prompt_mode, prompt_mode),
-                "n": int(len(sub)),
-                "min": float(sub.min()),
-                "max": float(sub.max()),
-                "Q1": float(sub.quantile(0.25)),
-                "Q3": float(sub.quantile(0.75)),
-                "median": float(sub.median()),
-                "mean": float(sub.mean()),
-                "std": float(sub.std()) if len(sub) > 1 else 0.0,
-            })
+            rows.append(
+                {
+                    "parameter": parameter,
+                    "parameter_display_name": metric_display_name(parameter),
+                    "source_table": source_table_name,
+                    "prompt_mode": prompt_mode,
+                    "prompt_label": PROMPT_LABELS.get(prompt_mode, prompt_mode),
+                    "n": int(len(sub)),
+                    "min": float(sub.min()),
+                    "max": float(sub.max()),
+                    "Q1": float(sub.quantile(0.25)),
+                    "Q3": float(sub.quantile(0.75)),
+                    "median": float(sub.median()),
+                    "mean": float(sub.mean()),
+                    "std": float(sub.std()) if len(sub) > 1 else 0.0,
+                }
+            )
 
     summary_df = pd.DataFrame(rows)
 
@@ -333,18 +366,19 @@ def save_excel_summary(
     inference_df: pd.DataFrame,
     output_dir: Path,
     dataset_name: str,
-    model_name: str,
-    training_state: str,
     split: str,
+    prompt_modes: list,
 ) -> Path:
     image_summary = summarize_numeric_columns(
         image_metrics_df,
         source_table_name="metrics_image_level",
+        prompt_modes=prompt_modes,
     )
 
     inference_summary = summarize_numeric_columns(
         inference_df,
         source_table_name="inference_results",
+        prompt_modes=prompt_modes,
     )
 
     summary_all = pd.concat(
@@ -368,32 +402,24 @@ def save_excel_summary(
         if not inference_df.empty:
             inference_df.to_excel(writer, sheet_name="inference_raw", index=False)
 
-        # Basic column width formatting.
-        workbook = writer.book
-
         for sheet_name in writer.sheets:
-            ws = writer.sheets[sheet_name]
+            worksheet = writer.sheets[sheet_name]
 
-            for column_cells in ws.columns:
+            for column_cells in worksheet.columns:
                 max_length = 0
                 column_letter = column_cells[0].column_letter
 
                 for cell in column_cells:
-                    try:
-                        value_length = len(str(cell.value))
-                        if value_length > max_length:
-                            max_length = value_length
-                    except Exception:
-                        pass
+                    value_length = len(str(cell.value)) if cell.value is not None else 0
+                    max_length = max(max_length, value_length)
 
                 adjusted_width = min(max(max_length + 2, 10), 35)
-                ws.column_dimensions[column_letter].width = adjusted_width
+                worksheet.column_dimensions[column_letter].width = adjusted_width
 
-            ws.freeze_panes = "A2"
+            worksheet.freeze_panes = "A2"
 
-            # Header style.
-            for cell in ws[1]:
-                cell.font = cell.font.copy(bold=True)
+            for cell in worksheet[1]:
+                cell.font = Font(bold=True)
 
     return out_xlsx
 
@@ -409,7 +435,7 @@ def visualize_dataset_model_split(
     print(f"Visualizing: {dataset_name} | {model_name} | {training_state} | {split}")
     print("=" * 100)
 
-    image_metrics_df, inference_df = collect_csvs(
+    image_metrics_df, inference_df, prompt_modes = collect_csvs(
         results_root=results_root,
         dataset_name=dataset_name,
         model_name=model_name,
@@ -441,9 +467,8 @@ def visualize_dataset_model_split(
         inference_df=inference_df,
         output_dir=output_dir,
         dataset_name=dataset_name,
-        model_name=model_name,
-        training_state=training_state,
         split=split,
+        prompt_modes=prompt_modes,
     )
     print(f"Saved Excel summary: {excel_path}")
 
@@ -460,6 +485,7 @@ def visualize_dataset_model_split(
             model_name=model_name,
             training_state=training_state,
             split=split,
+            prompt_modes=prompt_modes,
         )
 
         print(f"Saved plot: {out_path}")
