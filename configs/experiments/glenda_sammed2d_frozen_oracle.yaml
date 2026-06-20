@@ -1,0 +1,19 @@
+experiment_name: "GLENDA_SAMMed2D_Frozen_OraclePrompts"
+
+dataset_config: "configs/datasets/glenda.yaml"
+model_config: "configs/models/sammed2d_frozen.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA/SAM-Med2D/frozen"
+
+splits:
+  - val
+  - test
+
+prompt_modes:
+  - GT_point
+  - GT_box
+
+save:
+  instance_masks: true
+  merged_masks: true
+  overlays: true

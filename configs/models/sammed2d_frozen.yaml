@@ -1,0 +1,12 @@
+model_name: SAM-Med2D
+training_state: frozen
+
+sammed2d_repo_root: "F:/Models/SAM-Med2D"
+checkpoint: "F:/Models/SAM-Med2D/pretrain_model/sam-med2d_b.pth"
+
+device: "cuda"
+model_type: "vit_b"
+image_size: 256
+encoder_adapter: true
+multimask_output: true
+mask_selection: "highest_score"
