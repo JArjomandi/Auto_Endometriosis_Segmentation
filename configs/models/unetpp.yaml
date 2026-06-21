@@ -1,0 +1,25 @@
+model_name: UNetPP
+training_state: trained
+
+architecture: "UnetPlusPlus"
+encoder_name: "resnet34"
+encoder_weights: "imagenet"
+
+in_channels: 3
+classes: 1
+activation: null
+
+image_size: 512
+batch_size: 4
+num_workers: 4
+
+epochs: 80
+learning_rate: 0.0001
+weight_decay: 0.00001
+
+loss:
+  dice_weight: 0.5
+  bce_weight: 0.5
+
+threshold: 0.5
+device: "cuda"

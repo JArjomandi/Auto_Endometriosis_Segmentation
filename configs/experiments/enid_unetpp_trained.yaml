@@ -1,0 +1,16 @@
+experiment_name: "ENID_UNetPP_Trained"
+
+dataset_config: "configs/datasets/enid.yaml"
+model_config: "configs/models/unetpp.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/ENID/UNetPP/trained"
+
+splits:
+  train: "train"
+  val: "val"
+  test: "test"
+
+save:
+  merged_masks: true
+  overlays: true
+  checkpoints: true

@@ -1,0 +1,16 @@
+experiment_name: "GLENDA_UNetPP_Trained"
+
+dataset_config: "configs/datasets/glenda.yaml"
+model_config: "configs/models/unetpp.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA/UNetPP/trained"
+
+splits:
+  train: "train"
+  val: "val"
+  test: "test"
+
+save:
+  merged_masks: true
+  overlays: true
+  checkpoints: true
