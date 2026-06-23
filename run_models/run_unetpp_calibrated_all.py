@@ -11,18 +11,18 @@ from src.evaluation.visualize_metrics import visualize_dataset_model_split
 RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 
 CONFIGS_TO_RUN = [
-    PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_trained.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_trained.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_calibrated.yaml",
 ]
 
-# Debug: run only ENID
+# Debug: run only ENID calibrated
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_trained.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_calibrated.yaml",
 # ]
 
-# Debug: run only GLENDA
+# Debug: run only GLENDA calibrated
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_trained.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_calibrated.yaml",
 # ]
 
 DATASETS_TO_VISUALIZE = [
@@ -38,7 +38,7 @@ SPLITS_TO_VISUALIZE = [
 
 def main():
     print("=" * 100)
-    print("Running UNet++ baseline experiments")
+    print("Running UNet++ calibrated baseline experiments")
     print(f"Project root: {PROJECT_ROOT}")
     print("=" * 100)
 
@@ -52,10 +52,10 @@ def main():
 
         train_and_evaluate(str(config_path))
 
-    print("\nAll selected UNet++ experiments finished.")
+    print("\nAll selected UNet++ calibrated experiments finished.")
 
     print("\n" + "=" * 100)
-    print("Visualizing UNet++ metrics")
+    print("Visualizing UNet++ calibrated metrics")
     print("=" * 100)
 
     for dataset_name in DATASETS_TO_VISUALIZE:
@@ -64,17 +64,17 @@ def main():
                 visualize_dataset_model_split(
                     results_root=RESULTS_ROOT,
                     dataset_name=dataset_name,
-                    model_name="UNetPP",
+                    model_name="UNetPP_calibrated",
                     training_state="trained",
                     split=split,
                 )
             except Exception as error:
                 print(
                     f"WARNING: Visualization failed for "
-                    f"{dataset_name} | UNetPP | {split}: {error}"
+                    f"{dataset_name} | UNetPP_calibrated | {split}: {error}"
                 )
 
-    print("\nAll selected UNet++ experiments and visualizations finished.")
+    print("\nAll selected UNet++ calibrated experiments and visualizations finished.")
 
 
 if __name__ == "__main__":

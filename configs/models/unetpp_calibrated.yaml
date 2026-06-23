@@ -1,4 +1,4 @@
-model_name: UNetPP
+model_name: UNetPP_calibrated
 training_state: trained
 
 architecture: "UnetPlusPlus"
@@ -32,7 +32,7 @@ threshold_sweep:
   enabled: true
   values: [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
   choose_metric: "dice"
-  use_best_threshold_for_final_eval: false
+  use_best_threshold_for_final_eval: true
 
 scheduler:
   use_reduce_on_plateau: true

@@ -2,6 +2,7 @@ from pathlib import Path
 import time
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -31,6 +32,7 @@ def dice_loss_from_logits(logits, targets, eps=1e-7):
     cardinality = torch.sum(probs + targets, dims)
 
     dice = (2.0 * intersection + eps) / (cardinality + eps)
+
     return 1.0 - dice.mean()
 
 
@@ -44,6 +46,38 @@ def combined_loss(logits, targets, dice_weight=0.5, bce_weight=0.5):
 def save_binary_mask(mask: np.ndarray, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(mask.astype(np.uint8)).save(output_path)
+
+
+def remove_small_components(binary_mask: np.ndarray, min_area_px: int):
+    if min_area_px <= 0:
+        return binary_mask
+
+    mask = (binary_mask > 0).astype(np.uint8)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        mask,
+        connectivity=8,
+    )
+
+    cleaned = np.zeros_like(mask, dtype=np.uint8)
+
+    for label_id in range(1, num_labels):
+        area = stats[label_id, cv2.CC_STAT_AREA]
+
+        if area >= min_area_px:
+            cleaned[labels == label_id] = 1
+
+    return cleaned.astype(np.uint8) * 255
+
+
+def probability_to_binary_mask(probability_map, threshold, postprocessing_cfg):
+    binary_mask = (probability_map >= threshold).astype(np.uint8) * 255
+
+    if postprocessing_cfg.get("remove_small_components", False):
+        min_area_px = int(postprocessing_cfg.get("min_component_area_px", 0))
+        binary_mask = remove_small_components(binary_mask, min_area_px)
+
+    return binary_mask
 
 
 def find_original_image_path(images_dir: Path, image_name: str) -> Path:
@@ -60,7 +94,7 @@ def find_original_image_path(images_dir: Path, image_name: str) -> Path:
         if candidate.exists():
             return candidate
 
-    raise FileNotFoundError(f"Image not found: {image_name}")
+    raise FileNotFoundError(f"Image not found: {image_name} in {images_dir}")
 
 
 def find_original_mask_path(masks_dir: Path, image_name: str) -> Path:
@@ -72,12 +106,13 @@ def find_original_mask_path(masks_dir: Path, image_name: str) -> Path:
         if candidate.exists():
             return candidate
 
-    raise FileNotFoundError(f"Mask not found for: {image_name}")
+    raise FileNotFoundError(f"Mask not found for image: {image_name} in {masks_dir}")
 
 
 def load_binary_mask(mask_path: Path):
     mask = Image.open(mask_path).convert("L")
     mask_np = np.array(mask)
+
     return (mask_np > 0).astype(np.uint8) * 255
 
 
@@ -93,11 +128,12 @@ def train_one_epoch(model, dataloader, optimizer, device, loss_cfg):
         optimizer.zero_grad(set_to_none=True)
 
         logits = model(images)
+
         loss = combined_loss(
             logits=logits,
             targets=masks,
-            dice_weight=loss_cfg.get("dice_weight", 0.5),
-            bce_weight=loss_cfg.get("bce_weight", 0.5),
+            dice_weight=float(loss_cfg.get("dice_weight", 0.5)),
+            bce_weight=float(loss_cfg.get("bce_weight", 0.5)),
         )
 
         loss.backward()
@@ -109,20 +145,304 @@ def train_one_epoch(model, dataloader, optimizer, device, loss_cfg):
 
 
 @torch.no_grad()
-def evaluate_split(
+def validate_one_epoch(
+    model,
+    dataloader,
+    device,
+    loss_cfg,
+    threshold,
+    postprocessing_cfg,
+):
+    model.eval()
+
+    losses = []
+    dice_scores = []
+    iou_scores = []
+    precision_scores = []
+    recall_scores = []
+
+    for batch in dataloader:
+        images = batch["image"].to(device)
+        masks = batch["mask"].to(device)
+
+        logits = model(images)
+
+        loss = combined_loss(
+            logits=logits,
+            targets=masks,
+            dice_weight=float(loss_cfg.get("dice_weight", 0.5)),
+            bce_weight=float(loss_cfg.get("bce_weight", 0.5)),
+        )
+
+        losses.append(float(loss.detach().cpu().item()))
+
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+        masks_np = masks.detach().cpu().numpy()
+
+        for i in range(probs.shape[0]):
+            pred_mask = probability_to_binary_mask(
+                probability_map=probs[i, 0],
+                threshold=threshold,
+                postprocessing_cfg=postprocessing_cfg,
+            )
+
+            gt_mask = (masks_np[i, 0] > 0).astype(np.uint8) * 255
+
+            metrics = compute_binary_metrics(
+                pred_mask=pred_mask,
+                gt_mask=gt_mask,
+            )
+
+            dice_scores.append(metrics["dice"])
+            iou_scores.append(metrics["iou"])
+            precision_scores.append(metrics["precision"])
+            recall_scores.append(metrics["recall"])
+
+    return {
+        "val_loss": float(np.mean(losses)),
+        "val_dice": float(np.mean(dice_scores)),
+        "val_iou": float(np.mean(iou_scores)),
+        "val_precision": float(np.mean(precision_scores)),
+        "val_recall": float(np.mean(recall_scores)),
+    }
+
+
+def save_training_history(history_rows, output_root: Path):
+    history_df = pd.DataFrame(history_rows)
+
+    csv_path = output_root / "training_history.csv"
+    xlsx_path = output_root / "training_history.xlsx"
+
+    history_df.to_csv(csv_path, index=False)
+
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        history_df.to_excel(writer, sheet_name="training_history", index=False)
+
+        worksheet = writer.sheets["training_history"]
+        worksheet.freeze_panes = "A2"
+
+        for column_cells in worksheet.columns:
+            max_length = 0
+            column_letter = column_cells[0].column_letter
+
+            for cell in column_cells:
+                value_length = len(str(cell.value)) if cell.value is not None else 0
+                max_length = max(max_length, value_length)
+
+            worksheet.column_dimensions[column_letter].width = min(
+                max(max_length + 2, 10),
+                25,
+            )
+
+    return history_df
+
+
+def save_loss_curve(history_df: pd.DataFrame, output_root: Path):
+    curves_dir = output_root / "training_curves"
+    curves_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.plot(
+        history_df["epoch"],
+        history_df["train_loss"],
+        label="Training loss",
+        linewidth=2,
+    )
+
+    ax.plot(
+        history_df["epoch"],
+        history_df["val_loss"],
+        label="Validation loss",
+        linewidth=2,
+    )
+
+    ax.set_title("Training and validation loss", fontsize=16, fontweight="bold")
+    ax.set_xlabel("Epoch", fontsize=14)
+    ax.set_ylabel("Loss", fontsize=14)
+    ax.tick_params(axis="both", labelsize=12)
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(fontsize=12, frameon=False)
+
+    fig.tight_layout()
+
+    output_path = curves_dir / "loss_curve.png"
+    fig.savefig(output_path, dpi=500)
+    plt.close(fig)
+
+
+@torch.no_grad()
+def collect_probabilities_for_split(
     model,
     dataloader,
     dataset_root: Path,
     split_cfg: dict,
-    output_root: Path,
-    split_name: str,
     device,
-    threshold: float,
-    image_size: int,
-    save_cfg: dict,
 ):
     model.eval()
 
+    images_dir = dataset_root / split_cfg["images"]
+    masks_dir = dataset_root / split_cfg["masks"]
+
+    records = []
+
+    for batch in dataloader:
+        images = batch["image"].to(device)
+        image_names = batch["image_name"]
+
+        logits = model(images)
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+
+        for i, image_name in enumerate(image_names):
+            mask_path = find_original_mask_path(masks_dir, image_name)
+            gt_mask = load_binary_mask(mask_path)
+
+            original_h, original_w = gt_mask.shape
+
+            probability_map = cv2.resize(
+                probs[i, 0],
+                (original_w, original_h),
+                interpolation=cv2.INTER_LINEAR,
+            )
+
+            image_path = find_original_image_path(images_dir, image_name)
+
+            records.append(
+                {
+                    "image_name": image_name,
+                    "probability_map": probability_map,
+                    "gt_mask": gt_mask,
+                    "image_path": image_path,
+                    "mask_path": mask_path,
+                }
+            )
+
+    return records
+
+
+def run_threshold_sweep(records, thresholds, postprocessing_cfg):
+    rows = []
+
+    for threshold in thresholds:
+        metric_rows = []
+
+        for record in records:
+            pred_mask = probability_to_binary_mask(
+                probability_map=record["probability_map"],
+                threshold=float(threshold),
+                postprocessing_cfg=postprocessing_cfg,
+            )
+
+            metrics = compute_binary_metrics(
+                pred_mask=pred_mask,
+                gt_mask=record["gt_mask"],
+            )
+
+            metric_rows.append(metrics)
+
+        metric_df = pd.DataFrame(metric_rows)
+
+        row = {
+            "threshold": float(threshold),
+            "dice": float(metric_df["dice"].mean()),
+            "iou": float(metric_df["iou"].mean()),
+            "precision": float(metric_df["precision"].mean()),
+            "recall": float(metric_df["recall"].mean()),
+        }
+
+        if "specificity" in metric_df.columns:
+            row["specificity"] = float(metric_df["specificity"].mean())
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def save_threshold_sweep(threshold_df: pd.DataFrame, output_root: Path):
+    csv_path = output_root / "threshold_sweep_val.csv"
+    xlsx_path = output_root / "threshold_sweep_val.xlsx"
+
+    threshold_df.to_csv(csv_path, index=False)
+
+    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+        threshold_df.to_excel(writer, sheet_name="threshold_sweep_val", index=False)
+
+        worksheet = writer.sheets["threshold_sweep_val"]
+        worksheet.freeze_panes = "A2"
+
+        for column_cells in worksheet.columns:
+            max_length = 0
+            column_letter = column_cells[0].column_letter
+
+            for cell in column_cells:
+                value_length = len(str(cell.value)) if cell.value is not None else 0
+                max_length = max(max_length, value_length)
+
+            worksheet.column_dimensions[column_letter].width = min(
+                max(max_length + 2, 10),
+                25,
+            )
+
+    curves_dir = output_root / "training_curves"
+    curves_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.plot(
+        threshold_df["threshold"],
+        threshold_df["dice"],
+        marker="o",
+        label="Dice",
+        linewidth=2,
+    )
+
+    ax.plot(
+        threshold_df["threshold"],
+        threshold_df["precision"],
+        marker="o",
+        label="Precision",
+        linewidth=2,
+    )
+
+    ax.plot(
+        threshold_df["threshold"],
+        threshold_df["recall"],
+        marker="o",
+        label="Recall",
+        linewidth=2,
+    )
+
+    ax.set_title("Validation threshold sweep", fontsize=16, fontweight="bold")
+    ax.set_xlabel("Threshold", fontsize=14)
+    ax.set_ylabel("Metric", fontsize=14)
+    ax.tick_params(axis="both", labelsize=12)
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(fontsize=12, frameon=False)
+
+    fig.tight_layout()
+
+    plot_path = curves_dir / "threshold_sweep_val.png"
+    fig.savefig(plot_path, dpi=500)
+    plt.close(fig)
+
+    print(f"Saved threshold sweep CSV:  {csv_path}")
+    print(f"Saved threshold sweep XLSX: {xlsx_path}")
+    print(f"Saved threshold sweep plot: {plot_path}")
+
+
+@torch.no_grad()
+def evaluate_records_and_save(
+    records,
+    dataset_name: str,
+    model_name: str,
+    output_root: Path,
+    split_name: str,
+    threshold: float,
+    postprocessing_cfg,
+    save_cfg,
+    inference_time_ms_per_image=None,
+):
     prompt_mode = "No_prompt"
 
     out_dir = output_root / prompt_mode / split_name
@@ -132,93 +452,78 @@ def evaluate_split(
     merged_dir.mkdir(parents=True, exist_ok=True)
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
-    images_dir = dataset_root / split_cfg["images"]
-    masks_dir = dataset_root / split_cfg["masks"]
-
     inference_rows = []
     metric_rows = []
 
-    for batch in dataloader:
-        images = batch["image"].to(device)
-        image_names = batch["image_name"]
+    for record in records:
+        image_name = record["image_name"]
+        image_path = record["image_path"]
+        mask_path = record["mask_path"]
+        gt_mask = record["gt_mask"]
 
-        start_time = time.perf_counter()
-        logits = model(images)
-        probs = torch.sigmoid(logits)
-        elapsed_ms_batch = (time.perf_counter() - start_time) * 1000.0
+        pred_mask = probability_to_binary_mask(
+            probability_map=record["probability_map"],
+            threshold=threshold,
+            postprocessing_cfg=postprocessing_cfg,
+        )
 
-        probs_np = probs.detach().cpu().numpy()
+        merged_name = f"{Path(image_name).stem}.png"
+        merged_path = merged_dir / merged_name
 
-        batch_size = probs_np.shape[0]
-        elapsed_per_image_ms = elapsed_ms_batch / max(batch_size, 1)
+        if save_cfg.get("merged_masks", True):
+            save_binary_mask(pred_mask, merged_path)
 
-        for i in range(batch_size):
-            image_name = image_names[i]
-            prob = probs_np[i, 0]
+        if save_cfg.get("overlays", True):
+            overlay_path = overlay_dir / f"{Path(image_name).stem}_overlay.png"
 
-            image_path = find_original_image_path(images_dir, image_name)
-            mask_path = find_original_mask_path(masks_dir, image_name)
-
-            gt_mask = load_binary_mask(mask_path)
-            original_h, original_w = gt_mask.shape
-
-            prob_resized = cv2.resize(
-                prob,
-                (original_w, original_h),
-                interpolation=cv2.INTER_LINEAR,
-            )
-
-            pred_mask = (prob_resized >= threshold).astype(np.uint8) * 255
-
-            merged_name = f"{Path(image_name).stem}.png"
-            merged_path = merged_dir / merged_name
-
-            if save_cfg.get("merged_masks", True):
-                save_binary_mask(pred_mask, merged_path)
-
-            if save_cfg.get("overlays", True):
-                overlay_path = overlay_dir / f"{Path(image_name).stem}_overlay.png"
-
-                save_overlay(
-                    image_path=image_path,
-                    gt_mask=gt_mask,
-                    pred_mask=pred_mask,
-                    output_path=overlay_path,
-                )
-
-            metrics = compute_binary_metrics(
-                pred_mask=pred_mask,
+            save_overlay(
+                image_path=image_path,
                 gt_mask=gt_mask,
+                pred_mask=pred_mask,
+                output_path=overlay_path,
             )
 
-            inference_rows.append(
-                {
-                    "dataset": dataset_root.name,
-                    "split": split_name,
-                    "model_name": "UNetPP",
-                    "training_state": "trained",
-                    "prompt_mode": prompt_mode,
-                    "image_name": image_name,
-                    "mask_name": Path(mask_path).name,
-                    "threshold": threshold,
-                    "inference_time_ms": elapsed_per_image_ms,
-                    "merged_mask_name": merged_name,
-                }
-            )
+        metrics = compute_binary_metrics(
+            pred_mask=pred_mask,
+            gt_mask=gt_mask,
+        )
 
-            metric_row = {
-                "dataset": dataset_root.name,
+        inference_rows.append(
+            {
+                "dataset": dataset_name,
                 "split": split_name,
-                "model_name": "UNetPP",
+                "model_name": model_name,
                 "training_state": "trained",
                 "prompt_mode": prompt_mode,
                 "image_name": image_name,
                 "mask_name": Path(mask_path).name,
-                "num_prompt_instances": 0,
+                "threshold": threshold,
+                "postprocess_remove_small_components": postprocessing_cfg.get(
+                    "remove_small_components",
+                    False,
+                ),
+                "postprocess_min_component_area_px": postprocessing_cfg.get(
+                    "min_component_area_px",
+                    0,
+                ),
+                "inference_time_ms": inference_time_ms_per_image,
+                "merged_mask_name": merged_name,
             }
+        )
 
-            metric_row.update(metrics)
-            metric_rows.append(metric_row)
+        metric_row = {
+            "dataset": dataset_name,
+            "split": split_name,
+            "model_name": model_name,
+            "training_state": "trained",
+            "prompt_mode": prompt_mode,
+            "image_name": image_name,
+            "mask_name": Path(mask_path).name,
+            "num_prompt_instances": 0,
+        }
+
+        metric_row.update(metrics)
+        metric_rows.append(metric_row)
 
     inference_df = pd.DataFrame(inference_rows)
     metrics_df = pd.DataFrame(metric_rows)
@@ -231,10 +536,44 @@ def evaluate_split(
     metrics_df.to_csv(metrics_csv, index=False)
 
     numeric_cols = metrics_df.select_dtypes(include="number").columns
-    summary_df = metrics_df[numeric_cols].agg(["mean", "std", "median", "min", "max"]).T
+
+    summary_df = metrics_df[numeric_cols].agg(
+        ["mean", "std", "median", "min", "max"]
+    ).T
+
     summary_df.to_csv(summary_csv)
 
     return metrics_df
+
+
+@torch.no_grad()
+def estimate_inference_time_per_image(model, dataloader, device):
+    model.eval()
+
+    total_images = 0
+    total_time_ms = 0.0
+
+    for batch in dataloader:
+        images = batch["image"].to(device)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+
+        start_time = time.perf_counter()
+        _ = model(images)
+
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+
+        total_time_ms += elapsed_ms
+        total_images += images.shape[0]
+
+    if total_images == 0:
+        return None
+
+    return total_time_ms / total_images
 
 
 def train_and_evaluate(experiment_config_path):
@@ -248,6 +587,7 @@ def train_and_evaluate(experiment_config_path):
 
     dataset_name = dataset_cfg["dataset_name"]
     dataset_root = Path(dataset_cfg["dataset_root"])
+    model_name = model_cfg.get("model_name", "UNetPP")
     output_root = Path(exp_cfg["output_root"])
 
     device = torch.device(
@@ -259,8 +599,9 @@ def train_and_evaluate(experiment_config_path):
     image_size = int(model_cfg.get("image_size", 512))
     batch_size = int(model_cfg.get("batch_size", 4))
     num_workers = int(model_cfg.get("num_workers", 4))
-    epochs = int(model_cfg.get("epochs", 80))
+    epochs = int(model_cfg.get("epochs", 100))
     threshold = float(model_cfg.get("threshold", 0.5))
+    postprocessing_cfg = model_cfg.get("postprocessing", {})
 
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -332,24 +673,49 @@ def train_and_evaluate(experiment_config_path):
         weight_decay=float(model_cfg.get("weight_decay", 1e-5)),
     )
 
+    scheduler_cfg = model_cfg.get("scheduler", {})
+    scheduler = None
+
+    if scheduler_cfg.get("use_reduce_on_plateau", False):
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="max",
+            factor=float(scheduler_cfg.get("factor", 0.5)),
+            patience=int(scheduler_cfg.get("patience", 12)),
+            min_lr=float(scheduler_cfg.get("min_lr", 1e-6)),
+        )
+
+    early_cfg = model_cfg.get("early_stopping", {})
+    early_enabled = bool(early_cfg.get("enabled", False))
+    early_patience = int(early_cfg.get("patience", 30))
+    epochs_without_improvement = 0
+
+    safe_model_name = model_name.replace("/", "_").replace("\\", "_")
+
     best_val_dice = -1.0
-    best_checkpoint_path = output_root / "checkpoints" / "best_unetpp.pt"
-    last_checkpoint_path = output_root / "checkpoints" / "last_unetpp.pt"
+    best_checkpoint_path = output_root / "checkpoints" / f"best_{safe_model_name}.pt"
+    last_checkpoint_path = output_root / "checkpoints" / f"last_{safe_model_name}.pt"
 
     best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
     history_rows = []
-
     save_cfg = exp_cfg.get("save", {})
 
     print("=" * 100)
-    print(f"Training UNet++ on {dataset_name}")
+    print(f"Training {model_name} on {dataset_name}")
     print(f"Dataset root: {dataset_root}")
     print(f"Output root:  {output_root}")
     print(f"Device:       {device}")
+    print(f"Train images: {len(train_dataset)}")
+    print(f"Val images:   {len(val_dataset)}")
+    print(f"Test images:  {len(test_dataset)}")
+    print(f"Threshold:    {threshold}")
+    print(f"Postprocess:  {postprocessing_cfg}")
     print("=" * 100)
 
     for epoch in range(1, epochs + 1):
+        current_lr = float(optimizer.param_groups[0]["lr"])
+
         train_loss = train_one_epoch(
             model=model,
             dataloader=train_loader,
@@ -358,40 +724,46 @@ def train_and_evaluate(experiment_config_path):
             loss_cfg=model_cfg.get("loss", {}),
         )
 
-        val_metrics = evaluate_split(
+        val_stats = validate_one_epoch(
             model=model,
             dataloader=val_loader,
-            dataset_root=dataset_root,
-            split_cfg=val_cfg,
-            output_root=output_root,
-            split_name="val",
             device=device,
+            loss_cfg=model_cfg.get("loss", {}),
             threshold=threshold,
-            image_size=image_size,
-            save_cfg={"merged_masks": False, "overlays": False},
+            postprocessing_cfg=postprocessing_cfg,
         )
 
-        val_dice = float(val_metrics["dice"].mean())
+        val_loss = val_stats["val_loss"]
+        val_dice = val_stats["val_dice"]
 
         history_rows.append(
             {
                 "epoch": epoch,
+                "learning_rate": current_lr,
                 "train_loss": train_loss,
+                "val_loss": val_loss,
                 "val_dice": val_dice,
-                "val_iou": float(val_metrics["iou"].mean()),
-                "val_precision": float(val_metrics["precision"].mean()),
-                "val_recall": float(val_metrics["recall"].mean()),
+                "val_iou": val_stats["val_iou"],
+                "val_precision": val_stats["val_precision"],
+                "val_recall": val_stats["val_recall"],
             }
         )
 
         print(
             f"Epoch {epoch:03d}/{epochs} | "
+            f"lr={current_lr:.2e} | "
             f"train_loss={train_loss:.4f} | "
-            f"val_dice={val_dice:.4f}"
+            f"val_loss={val_loss:.4f} | "
+            f"val_dice={val_dice:.4f} | "
+            f"val_precision={val_stats['val_precision']:.4f} | "
+            f"val_recall={val_stats['val_recall']:.4f}"
         )
 
-        if val_dice > best_val_dice:
+        improved = val_dice > best_val_dice
+
+        if improved:
             best_val_dice = val_dice
+            epochs_without_improvement = 0
 
             torch.save(
                 {
@@ -402,53 +774,139 @@ def train_and_evaluate(experiment_config_path):
                 },
                 best_checkpoint_path,
             )
+        else:
+            epochs_without_improvement += 1
+
+        if scheduler is not None:
+            scheduler.step(val_dice)
+
+        history_df = save_training_history(history_rows, output_root)
+        save_loss_curve(history_df, output_root)
+
+        if early_enabled and epochs_without_improvement >= early_patience:
+            print(
+                f"Early stopping at epoch {epoch}. "
+                f"No val Dice improvement for {early_patience} epochs."
+            )
+            break
 
     torch.save(
         {
             "model_state_dict": model.state_dict(),
             "model_cfg": model_cfg,
-            "epoch": epochs,
+            "epoch": history_rows[-1]["epoch"],
             "best_val_dice": best_val_dice,
         },
         last_checkpoint_path,
     )
 
-    history_df = pd.DataFrame(history_rows)
-    history_df.to_csv(output_root / "training_history.csv", index=False)
+    checkpoint = torch.load(
+        best_checkpoint_path,
+        map_location=device,
+        weights_only=False,
+    )
 
-    checkpoint = torch.load(best_checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     print("=" * 100)
     print(f"Loaded best checkpoint: {best_checkpoint_path}")
     print(f"Best val dice: {best_val_dice:.4f}")
-    print("Final evaluation with saved masks and overlays")
     print("=" * 100)
 
-    evaluate_split(
+    threshold_sweep_cfg = model_cfg.get("threshold_sweep", {})
+    final_threshold = threshold
+
+    val_records = collect_probabilities_for_split(
         model=model,
         dataloader=val_loader,
         dataset_root=dataset_root,
         split_cfg=val_cfg,
-        output_root=output_root,
-        split_name="val",
         device=device,
-        threshold=threshold,
-        image_size=image_size,
-        save_cfg=save_cfg,
     )
 
-    evaluate_split(
+    if threshold_sweep_cfg.get("enabled", False):
+        threshold_values = threshold_sweep_cfg.get(
+            "values",
+            [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50],
+        )
+
+        threshold_df = run_threshold_sweep(
+            records=val_records,
+            thresholds=threshold_values,
+            postprocessing_cfg=postprocessing_cfg,
+        )
+
+        save_threshold_sweep(threshold_df, output_root)
+
+        choose_metric = threshold_sweep_cfg.get("choose_metric", "dice")
+
+        if choose_metric not in threshold_df.columns:
+            raise ValueError(
+                f"choose_metric not found in threshold sweep: {choose_metric}"
+            )
+
+        best_row = threshold_df.sort_values(
+            by=[choose_metric, "dice"],
+            ascending=False,
+        ).iloc[0]
+
+        best_threshold = float(best_row["threshold"])
+
+        print(
+            f"Best validation threshold by {choose_metric}: "
+            f"{best_threshold:.2f}"
+        )
+
+        if threshold_sweep_cfg.get("use_best_threshold_for_final_eval", False):
+            final_threshold = best_threshold
+
+    print("=" * 100)
+    print(f"Final evaluation threshold: {final_threshold:.2f}")
+    print("Final evaluation with saved masks and overlays")
+    print("=" * 100)
+
+    val_inference_time = estimate_inference_time_per_image(
+        model=model,
+        dataloader=val_loader,
+        device=device,
+    )
+
+    test_inference_time = estimate_inference_time_per_image(
+        model=model,
+        dataloader=test_loader,
+        device=device,
+    )
+
+    evaluate_records_and_save(
+        records=val_records,
+        dataset_name=dataset_name,
+        model_name=model_name,
+        output_root=output_root,
+        split_name="val",
+        threshold=final_threshold,
+        postprocessing_cfg=postprocessing_cfg,
+        save_cfg=save_cfg,
+        inference_time_ms_per_image=val_inference_time,
+    )
+
+    test_records = collect_probabilities_for_split(
         model=model,
         dataloader=test_loader,
         dataset_root=dataset_root,
         split_cfg=test_cfg,
-        output_root=output_root,
-        split_name="test",
         device=device,
-        threshold=threshold,
-        image_size=image_size,
-        save_cfg=save_cfg,
     )
 
-    print("UNet++ training and evaluation finished.")
+    evaluate_records_and_save(
+        records=test_records,
+        dataset_name=dataset_name,
+        model_name=model_name,
+        output_root=output_root,
+        split_name="test",
+        threshold=final_threshold,
+        postprocessing_cfg=postprocessing_cfg,
+        save_cfg=save_cfg,
+        inference_time_ms_per_image=test_inference_time,
+    )
+
+    print(f"{model_name} training and evaluation finished.")
