@@ -10,6 +10,7 @@ from src.evaluation.visualize_metrics import visualize_dataset_model_split
 
 # ============================================================
 # Run frozen SurgiSAM2 oracle-prompt experiments
+# uses SAM2 Venv and checkpoints
 # ============================================================
 
 RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
