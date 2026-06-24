@@ -17,6 +17,7 @@ RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 CONFIGS_TO_RUN = [
     PROJECT_ROOT / "configs" / "experiments" / "enid_surgisam2_frozen_oracle.yaml",
     PROJECT_ROOT / "configs" / "experiments" / "glenda_surgisam2_frozen_oracle.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_surgisam2_frozen_oracle.yaml",
 ]
 
 # Run only ENID:
@@ -32,6 +33,7 @@ CONFIGS_TO_RUN = [
 DATASETS_TO_VISUALIZE = [
     "ENID",
     "GLENDA",
+    "GLENDA_clean",
 ]
 
 SPLITS_TO_VISUALIZE = [

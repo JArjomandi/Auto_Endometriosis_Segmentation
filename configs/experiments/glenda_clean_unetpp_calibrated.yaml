@@ -1,0 +1,16 @@
+experiment_name: "GLENDA_clean_UNetPP_Calibrated"
+
+dataset_config: "configs/datasets/glenda_clean.yaml"
+model_config: "configs/models/unetpp_calibrated.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/UNetPP_calibrated/trained"
+
+splits:
+  train: "train"
+  val: "val"
+  test: "test"
+
+save:
+  merged_masks: true
+  overlays: true
+  checkpoints: true

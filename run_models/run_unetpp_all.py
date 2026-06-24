@@ -13,6 +13,7 @@ RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 CONFIGS_TO_RUN = [
     PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_trained.yaml",
     PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_trained.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_unetpp_trained.yaml",
 ]
 
 # Debug: run only ENID
@@ -28,6 +29,7 @@ CONFIGS_TO_RUN = [
 DATASETS_TO_VISUALIZE = [
     "ENID",
     "GLENDA",
+    "GLENDA_clean",
 ]
 
 SPLITS_TO_VISUALIZE = [

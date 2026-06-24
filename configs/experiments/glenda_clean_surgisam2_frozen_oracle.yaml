@@ -1,0 +1,21 @@
+experiment_name: "GLENDA_clean_SurgiSAM2_Frozen_OraclePrompts"
+
+dataset_config: "configs/datasets/glenda_clean.yaml"
+model_config: "configs/models/surgisam2_frozen.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/SurgiSAM2/frozen"
+
+splits:
+  - val
+  - test
+
+prompt_modes:
+  - GT_point
+  - GT_box
+  - GT_box_point
+  - GT_box_posneg
+
+save:
+  instance_masks: true
+  merged_masks: true
+  overlays: true

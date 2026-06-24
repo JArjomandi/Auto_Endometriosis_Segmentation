@@ -1,0 +1,19 @@
+dataset_name: GLENDA_clean
+
+dataset_root: "F:/Datasets/Standardized datasets/GLENDA_clean/GLENDA_clean 60_20_20 split"
+
+splits:
+  train:
+    images: "train/images"
+    masks: "train/masks"
+    prompts: "oracle_prompts/GLENDA_clean_train_oracle_prompts.csv"
+
+  val:
+    images: "val/images"
+    masks: "val/masks"
+    prompts: "oracle_prompts/GLENDA_clean_val_oracle_prompts.csv"
+
+  test:
+    images: "test/images"
+    masks: "test/masks"
+    prompts: "oracle_prompts/GLENDA_clean_test_oracle_prompts.csv"
