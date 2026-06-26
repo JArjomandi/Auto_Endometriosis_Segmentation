@@ -4,31 +4,31 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.runners.run_unetpp import train_and_evaluate
+from src.runners.run_segformer import train_and_evaluate
 from src.evaluation.visualize_metrics import visualize_dataset_model_split
 
 
 RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 
 CONFIGS_TO_RUN = [
-    PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_trained.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_trained.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_unetpp_trained.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated.yaml",
 ]
 
-# Debug: run only ENID
+# Debug: run only ENID calibrated
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "enid_unetpp_trained.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated.yaml",
 # ]
 
-# Debug: run only original GLENDA
+# Debug: run only original GLENDA calibrated
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "glenda_unetpp_trained.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated.yaml",
 # ]
 
-# Debug: run only cleaned GLENDA
+# Debug: run only cleaned GLENDA calibrated
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_unetpp_trained.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated.yaml",
 # ]
 
 DATASETS_TO_VISUALIZE = [
@@ -45,7 +45,7 @@ SPLITS_TO_VISUALIZE = [
 
 def main():
     print("=" * 100)
-    print("Running UNet++ baseline experiments")
+    print("Running SegFormer calibrated baseline experiments")
     print(f"Project root: {PROJECT_ROOT}")
     print("=" * 100)
 
@@ -59,10 +59,10 @@ def main():
 
         train_and_evaluate(str(config_path))
 
-    print("\nAll selected UNet++ experiments finished.")
+    print("\nAll selected SegFormer calibrated experiments finished.")
 
     print("\n" + "=" * 100)
-    print("Visualizing UNet++ metrics")
+    print("Visualizing SegFormer calibrated metrics")
     print("=" * 100)
 
     for dataset_name in DATASETS_TO_VISUALIZE:
@@ -71,17 +71,17 @@ def main():
                 visualize_dataset_model_split(
                     results_root=RESULTS_ROOT,
                     dataset_name=dataset_name,
-                    model_name="UNetPP",
+                    model_name="SegFormer_calibrated",
                     training_state="trained",
                     split=split,
                 )
             except Exception as error:
                 print(
                     f"WARNING: Visualization failed for "
-                    f"{dataset_name} | UNetPP | {split}: {error}"
+                    f"{dataset_name} | SegFormer_calibrated | {split}: {error}"
                 )
 
-    print("\nAll selected UNet++ experiments and visualizations finished.")
+    print("\nAll selected SegFormer calibrated experiments and visualizations finished.")
 
 
 if __name__ == "__main__":

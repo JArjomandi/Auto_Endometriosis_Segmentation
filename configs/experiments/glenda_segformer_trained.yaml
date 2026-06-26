@@ -1,0 +1,13 @@
+experiment_name: "GLENDA_SegFormer_Trained"
+dataset_config: "configs/datasets/glenda.yaml"
+model_config: "configs/models/segformer.yaml"
+output_root: "F:/Results/SAM_Benchmarking/GLENDA/SegFormer/trained"
+
+splits:
+  train: train
+  val: val
+  test: test
+
+save:
+  merged_masks: true
+  overlays: true

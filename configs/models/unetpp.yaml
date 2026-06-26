@@ -37,9 +37,10 @@ threshold_sweep:
 scheduler:
   use_reduce_on_plateau: true
   factor: 0.5
-  patience: 12
+  patience: 8
   min_lr: 0.000001
 
 early_stopping:
-  enabled: false
-  patience: 30
+  enabled: true
+  patience: 20
+  min_delta: 0.001

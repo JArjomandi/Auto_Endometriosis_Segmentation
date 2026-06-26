@@ -1,0 +1,13 @@
+experiment_name: "GLENDA_clean_SegFormer_Calibrated"
+dataset_config: "configs/datasets/glenda_clean.yaml"
+model_config: "configs/models/segformer_calibrated.yaml"
+output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/SegFormer_calibrated/trained"
+
+splits:
+  train: train
+  val: val
+  test: test
+
+save:
+  merged_masks: true
+  overlays: true

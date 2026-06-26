@@ -1,0 +1,1 @@
+from src.models.segformer.segformer_model import build_segformer_model

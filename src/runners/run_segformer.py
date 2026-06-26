@@ -16,7 +16,7 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from src.datasets.segmentation_dataset import BinarySegmentationDataset
-from src.models.unetpp.unetpp_model import build_unetpp_model
+from src.models.segformer.segformer_model import build_segformer_model
 from src.evaluation.metrics import compute_binary_metrics
 from src.utils.visualization import save_overlay
 
@@ -26,6 +26,20 @@ def load_yaml(path):
 
     with open(path, "r", encoding="utf-8") as file:
         return yaml.safe_load(file)
+
+
+def forward_segformer_logits(model, images, target_size):
+    outputs = model(pixel_values=images)
+    logits = outputs.logits
+
+    logits = torch_functional.interpolate(
+        logits,
+        size=target_size,
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    return logits
 
 
 def dice_loss_from_logits(logits, targets, eps=1e-7):
@@ -131,7 +145,11 @@ def train_one_epoch(model, dataloader, optimizer, device, loss_cfg):
 
         optimizer.zero_grad(set_to_none=True)
 
-        logits = model(images)
+        logits = forward_segformer_logits(
+            model=model,
+            images=images,
+            target_size=masks.shape[-2:],
+        )
 
         loss = combined_loss(
             logits=logits,
@@ -169,7 +187,11 @@ def validate_one_epoch(
         images = batch["image"].to(device)
         masks = batch["mask"].to(device)
 
-        logits = model(images)
+        logits = forward_segformer_logits(
+            model=model,
+            images=images,
+            target_size=masks.shape[-2:],
+        )
 
         loss = combined_loss(
             logits=logits,
@@ -294,7 +316,12 @@ def collect_probabilities_for_split(
         images = batch["image"].to(device)
         image_names = batch["image_name"]
 
-        logits = model(images)
+        logits = forward_segformer_logits(
+            model=model,
+            images=images,
+            target_size=images.shape[-2:],
+        )
+
         probs = torch.sigmoid(logits).detach().cpu().numpy()
 
         for i, image_name in enumerate(image_names):
@@ -564,7 +591,12 @@ def estimate_inference_time_per_image(model, dataloader, device):
             torch.cuda.synchronize()
 
         start_time = time.perf_counter()
-        _ = model(images)
+
+        _ = forward_segformer_logits(
+            model=model,
+            images=images,
+            target_size=images.shape[-2:],
+        )
 
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -591,7 +623,7 @@ def train_and_evaluate(experiment_config_path):
 
     dataset_name = dataset_cfg["dataset_name"]
     dataset_root = Path(dataset_cfg["dataset_root"])
-    model_name = model_cfg.get("model_name", "UNetPP")
+    model_name = model_cfg.get("model_name", "SegFormer")
     output_root = Path(exp_cfg["output_root"])
 
     device = torch.device(
@@ -662,18 +694,16 @@ def train_and_evaluate(experiment_config_path):
         pin_memory=True,
     )
 
-    model = build_unetpp_model(
-        encoder_name=model_cfg.get("encoder_name", "resnet34"),
-        encoder_weights=model_cfg.get("encoder_weights", "imagenet"),
-        in_channels=int(model_cfg.get("in_channels", 3)),
-        classes=int(model_cfg.get("classes", 1)),
+    model = build_segformer_model(
+        pretrained_model_name=model_cfg.get("pretrained_model_name", "nvidia/mit-b2"),
+        num_labels=int(model_cfg.get("num_labels", 1)),
     )
 
     model.to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=float(model_cfg.get("learning_rate", 1e-4)),
+        lr=float(model_cfg.get("learning_rate", 6e-5)),
         weight_decay=float(model_cfg.get("weight_decay", 1e-5)),
     )
 
@@ -685,13 +715,13 @@ def train_and_evaluate(experiment_config_path):
             optimizer,
             mode="max",
             factor=float(scheduler_cfg.get("factor", 0.5)),
-            patience=int(scheduler_cfg.get("patience", 12)),
+            patience=int(scheduler_cfg.get("patience", 8)),
             min_lr=float(scheduler_cfg.get("min_lr", 1e-6)),
         )
 
     early_cfg = model_cfg.get("early_stopping", {})
     early_enabled = bool(early_cfg.get("enabled", False))
-    early_patience = int(early_cfg.get("patience", 30))
+    early_patience = int(early_cfg.get("patience", 20))
     early_min_delta = float(early_cfg.get("min_delta", 0.0))
     epochs_without_improvement = 0
 
@@ -714,6 +744,7 @@ def train_and_evaluate(experiment_config_path):
     print(f"Train images: {len(train_dataset)}")
     print(f"Val images:   {len(val_dataset)}")
     print(f"Test images:  {len(test_dataset)}")
+    print(f"Backbone:     {model_cfg.get('pretrained_model_name', 'nvidia/mit-b2')}")
     print(f"Threshold:    {threshold}")
     print(f"Postprocess:  {postprocessing_cfg}")
     print(f"Early stopping enabled: {early_enabled}")
