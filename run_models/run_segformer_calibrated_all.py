@@ -4,31 +4,31 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.runners.run_segformer import train_and_evaluate
+from src.runners.evaluate_segformer_checkpoint import evaluate_calibrated_checkpoint
 from src.evaluation.visualize_metrics import visualize_dataset_model_split
 
 
 RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 
 CONFIGS_TO_RUN = [
-    PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated_eval.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated_eval.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated_eval.yaml",
 ]
 
-# Debug: run only ENID calibrated
+# Debug: run only ENID calibrated evaluation
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated_eval.yaml",
 # ]
 
-# Debug: run only original GLENDA calibrated
+# Debug: run only original GLENDA calibrated evaluation
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated_eval.yaml",
 # ]
 
-# Debug: run only cleaned GLENDA calibrated
+# Debug: run only cleaned GLENDA calibrated evaluation
 # CONFIGS_TO_RUN = [
-#     PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated.yaml",
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated_eval.yaml",
 # ]
 
 DATASETS_TO_VISUALIZE = [
@@ -45,7 +45,7 @@ SPLITS_TO_VISUALIZE = [
 
 def main():
     print("=" * 100)
-    print("Running SegFormer calibrated baseline experiments")
+    print("Running SegFormer calibrated evaluation-only experiments")
     print(f"Project root: {PROJECT_ROOT}")
     print("=" * 100)
 
@@ -54,12 +54,12 @@ def main():
             raise FileNotFoundError(f"Config file not found: {config_path}")
 
         print("\n" + "=" * 100)
-        print(f"Running config: {config_path}")
+        print(f"Running calibrated eval config: {config_path}")
         print("=" * 100)
 
-        train_and_evaluate(str(config_path))
+        evaluate_calibrated_checkpoint(str(config_path))
 
-    print("\nAll selected SegFormer calibrated experiments finished.")
+    print("\nAll selected SegFormer calibrated evaluation-only experiments finished.")
 
     print("\n" + "=" * 100)
     print("Visualizing SegFormer calibrated metrics")
@@ -81,7 +81,7 @@ def main():
                     f"{dataset_name} | SegFormer_calibrated | {split}: {error}"
                 )
 
-    print("\nAll selected SegFormer calibrated experiments and visualizations finished.")
+    print("\nAll selected SegFormer calibrated evaluations and visualizations finished.")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,22 @@
-experiment_name: "GLENDA_SegFormer_Calibrated"
+experiment_name: "GLENDA_SegFormer_Calibrated_EvalOnly"
+
 dataset_config: "configs/datasets/glenda.yaml"
-model_config: "configs/models/segformer_calibrated.yaml"
+model_config: "configs/models/segformer.yaml"
+
+source_checkpoint: "F:/Results/SAM_Benchmarking/GLENDA/SegFormer/trained/checkpoints/best_SegFormer.pt"
+source_output_root: "F:/Results/SAM_Benchmarking/GLENDA/SegFormer/trained"
+
 output_root: "F:/Results/SAM_Benchmarking/GLENDA/SegFormer_calibrated/trained"
 
 splits:
-  train: train
   val: val
   test: test
+
+threshold_sweep:
+  enabled: true
+  values: [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+  choose_metric: "dice"
+  use_best_threshold_for_final_eval: true
 
 save:
   merged_masks: true

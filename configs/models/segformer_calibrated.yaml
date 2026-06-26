@@ -1,29 +1,16 @@
-model_name: SegFormer_calibrated
-training_state: trained
+experiment_name: "ENID_SegFormer_Calibrated_EvalOnly"
 
-architecture: "SegFormer"
-pretrained_model_name: "nvidia/mit-b2"
+dataset_config: "configs/datasets/enid.yaml"
+model_config: "configs/models/segformer.yaml"
 
-num_labels: 1
+source_checkpoint: "F:/Results/SAM_Benchmarking/ENID/SegFormer/trained/checkpoints/best_SegFormer.pt"
+source_output_root: "F:/Results/SAM_Benchmarking/ENID/SegFormer/trained"
 
-image_size: 512
-batch_size: 4
-num_workers: 4
+output_root: "F:/Results/SAM_Benchmarking/ENID/SegFormer_calibrated/trained"
 
-epochs: 100
-learning_rate: 0.00006
-weight_decay: 0.00001
-
-loss:
-  dice_weight: 0.5
-  bce_weight: 0.5
-
-threshold: 0.5
-device: "cuda"
-
-postprocessing:
-  remove_small_components: false
-  min_component_area_px: 0
+splits:
+  val: val
+  test: test
 
 threshold_sweep:
   enabled: true
@@ -31,13 +18,6 @@ threshold_sweep:
   choose_metric: "dice"
   use_best_threshold_for_final_eval: true
 
-scheduler:
-  use_reduce_on_plateau: true
-  factor: 0.5
-  patience: 8
-  min_lr: 0.000001
-
-early_stopping:
-  enabled: true
-  patience: 20
-  min_delta: 0.001
+save:
+  merged_masks: true
+  overlays: true

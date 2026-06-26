@@ -2,7 +2,7 @@ model_name: SegFormer
 training_state: trained
 
 architecture: "SegFormer"
-pretrained_model_name: "nvidia/mit-b2"
+pretrained_model_name: "nvidia/segformer-b2-finetuned-ade-512-512"
 
 num_labels: 1
 
