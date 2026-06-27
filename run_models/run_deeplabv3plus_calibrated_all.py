@@ -1,0 +1,88 @@
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.runners.evaluate_deeplabv3plus_checkpoint import evaluate_calibrated_checkpoint
+from src.evaluation.visualize_metrics import visualize_dataset_model_split
+
+
+RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
+
+CONFIGS_TO_RUN = [
+    PROJECT_ROOT / "configs" / "experiments" / "enid_deeplabv3plus_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_deeplabv3plus_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_deeplabv3plus_calibrated.yaml",
+]
+
+# Debug: run only ENID calibrated evaluation
+# CONFIGS_TO_RUN = [
+#     PROJECT_ROOT / "configs" / "experiments" / "enid_deeplabv3plus_calibrated.yaml",
+# ]
+
+# Debug: run only original GLENDA calibrated evaluation
+# CONFIGS_TO_RUN = [
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_deeplabv3plus_calibrated.yaml",
+# ]
+
+# Debug: run only cleaned GLENDA calibrated evaluation
+# CONFIGS_TO_RUN = [
+#     PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_deeplabv3plus_calibrated.yaml",
+# ]
+
+DATASETS_TO_VISUALIZE = [
+    "ENID",
+    "GLENDA",
+    "GLENDA_clean",
+]
+
+SPLITS_TO_VISUALIZE = [
+    "val",
+    "test",
+]
+
+
+def main():
+    print("=" * 100)
+    print("Running DeepLabV3Plus calibrated evaluation-only experiments")
+    print(f"Project root: {PROJECT_ROOT}")
+    print("=" * 100)
+
+    for config_path in CONFIGS_TO_RUN:
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        print("\n" + "=" * 100)
+        print(f"Running calibrated eval config: {config_path}")
+        print("=" * 100)
+
+        evaluate_calibrated_checkpoint(str(config_path))
+
+    print("\nAll selected DeepLabV3Plus calibrated evaluation-only experiments finished.")
+
+    print("\n" + "=" * 100)
+    print("Visualizing DeepLabV3Plus calibrated metrics")
+    print("=" * 100)
+
+    for dataset_name in DATASETS_TO_VISUALIZE:
+        for split in SPLITS_TO_VISUALIZE:
+            try:
+                visualize_dataset_model_split(
+                    results_root=RESULTS_ROOT,
+                    dataset_name=dataset_name,
+                    model_name="DeepLabV3Plus_calibrated",
+                    training_state="trained",
+                    split=split,
+                )
+            except Exception as error:
+                print(
+                    f"WARNING: Visualization failed for "
+                    f"{dataset_name} | DeepLabV3Plus_calibrated | {split}: {error}"
+                )
+
+    print("\nAll selected DeepLabV3Plus calibrated evaluations and visualizations finished.")
+
+
+if __name__ == "__main__":
+    main()

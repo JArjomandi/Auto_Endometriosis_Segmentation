@@ -1,0 +1,23 @@
+experiment_name: "GLENDA_clean_DeepLabV3Plus_Calibrated_EvalOnly"
+
+dataset_config: "configs/datasets/glenda_clean.yaml"
+model_config: "configs/models/deeplabv3plus.yaml"
+
+source_checkpoint: "F:/Results/SAM_Benchmarking/GLENDA_clean/DeepLabV3Plus/trained/checkpoints/best_DeepLabV3Plus.pt"
+source_output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/DeepLabV3Plus/trained"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/DeepLabV3Plus_calibrated/trained"
+
+splits:
+  val: val
+  test: test
+
+threshold_sweep:
+  enabled: true
+  values: [0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
+  choose_metric: "dice"
+  use_best_threshold_for_final_eval: true
+
+save:
+  merged_masks: true
+  overlays: true
