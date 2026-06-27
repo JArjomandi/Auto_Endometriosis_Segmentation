@@ -11,9 +11,9 @@ from src.evaluation.visualize_metrics import visualize_dataset_model_split
 RESULTS_ROOT = Path(r"F:\Results\SAM_Benchmarking")
 
 CONFIGS_TO_RUN = [
-    PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated_eval.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated_eval.yaml",
-    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated_eval.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "enid_segformer_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_segformer_calibrated.yaml",
+    PROJECT_ROOT / "configs" / "experiments" / "glenda_clean_segformer_calibrated.yaml",
 ]
 
 # Debug: run only ENID calibrated evaluation
