@@ -1,0 +1,18 @@
+experiment_name: "GLENDA_clean_YOLO11s_seg_Trained"
+
+dataset_config: "configs/datasets/glenda_clean.yaml"
+model_config: "configs/models/yolo11s_seg.yaml"
+
+yolo_dataset_yaml: "F:/Datasets/YOLO datasets/GLENDA_clean_yolo_seg/glenda_clean_yolo_seg.yaml"
+
+output_root: "F:/Results/SAM_Benchmarking/GLENDA_clean/YOLO11s_seg/trained"
+
+splits:
+  train: train
+  val: val
+  test: test
+
+save:
+  merged_masks: true
+  overlays: true
+  auto_box_prompts: true

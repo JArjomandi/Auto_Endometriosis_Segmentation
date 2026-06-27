@@ -1,0 +1,1 @@
+from src.models.yolo_seg.yolo_seg_model import build_yolo_seg_model

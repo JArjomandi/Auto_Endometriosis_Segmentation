@@ -1,0 +1,24 @@
+model_name: YOLO11s_seg
+training_state: trained
+
+architecture: "YOLO instance segmentation"
+pretrained_model: "yolo11s-seg.pt"
+
+imgsz: 640
+epochs: 100
+batch: 8
+workers: 4
+device: 0
+
+optimizer: "auto"
+lr0: 0.001
+weight_decay: 0.0005
+patience: 20
+
+conf: 0.25
+iou: 0.50
+max_det: 100
+retina_masks: true
+
+save_period: -1
+plots: true
