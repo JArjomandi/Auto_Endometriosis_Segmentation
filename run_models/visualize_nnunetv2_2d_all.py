@@ -29,7 +29,7 @@ def main():
                 visualize_dataset_model_split(
                     results_root=RESULTS_ROOT,
                     dataset_name=dataset_name,
-                    model_name="nnUNetV2_2D",
+                    model_name="nnUNetV2_2D_100ep",
                     training_state="trained",
                     split=split,
                 )

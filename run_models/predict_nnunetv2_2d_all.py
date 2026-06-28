@@ -31,6 +31,7 @@ DATASETS = [
 
 CONFIGURATION = "2d"
 FOLD = "0"
+TRAINER = "nnUNetTrainer_100epochs"
 CHECKPOINT = "checkpoint_best.pth"
 
 
@@ -95,13 +96,13 @@ def predict_dataset(dataset_id: int, dataset_folder: str, env):
     output_all_images_tr = (
         NNUNET_EXPORTS
         / dataset_folder
-        / "all_imagesTr_predictions"
+        / "all_imagesTr_predictions_100ep"
     )
 
     output_test = (
         NNUNET_EXPORTS
         / dataset_folder
-        / "test_predictions"
+        / "test_predictions_100ep"
     )
 
     output_all_images_tr.mkdir(parents=True, exist_ok=True)
@@ -126,6 +127,8 @@ def predict_dataset(dataset_id: int, dataset_folder: str, env):
             CONFIGURATION,
             "-f",
             FOLD,
+            "-tr",
+            TRAINER,
             "-chk",
             CHECKPOINT,
         ],
@@ -145,6 +148,8 @@ def predict_dataset(dataset_id: int, dataset_folder: str, env):
             CONFIGURATION,
             "-f",
             FOLD,
+            "-tr",
+            TRAINER,
             "-chk",
             CHECKPOINT,
         ],
@@ -156,7 +161,8 @@ def main():
     env = get_nnunet_environment()
 
     print("=" * 100)
-    print("Predicting validation/test sets with nnU-Net v2 2D")
+    print(f"Predicting validation/test sets with nn-U-Net v2 2D")
+    print(f"Trainer: {TRAINER}")
     print("=" * 100)
 
     for dataset_cfg in DATASETS:
@@ -166,7 +172,7 @@ def main():
             env=env,
         )
 
-    print("\nAll selected nnU-Net v2 predictions finished.")
+    print("\nAll selected nnU-Net v2 100-epoch predictions finished.")
 
 
 if __name__ == "__main__":

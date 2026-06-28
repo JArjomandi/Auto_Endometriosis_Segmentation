@@ -40,7 +40,8 @@ DATASETS = [
     },
 ]
 
-MODEL_NAME = "nnUNetV2_2D"
+#MODEL_NAME = "nnUNetV2_2D"
+MODEL_NAME = "nnUNetV2_2D_100ep"
 TRAINING_STATE = "trained"
 PROMPT_MODE = "No_prompt"
 
@@ -305,13 +306,13 @@ def evaluate_dataset(dataset_cfg):
     all_images_tr_predictions = (
         NNUNET_EXPORTS
         / dataset_folder
-        / "all_imagesTr_predictions"
+        / "all_imagesTr_predictions_100ep"
     )
 
     test_predictions = (
         NNUNET_EXPORTS
         / dataset_folder
-        / "test_predictions"
+        / "test_predictions_100ep"
     )
 
     if not all_images_tr_predictions.exists():

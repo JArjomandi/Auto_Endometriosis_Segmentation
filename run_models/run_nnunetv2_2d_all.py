@@ -6,17 +6,16 @@ import sys
 
 import pandas as pd
 
-# '''
-# # Run order:
-# #
-# # 1. preprocess\prepare_nnunetv2_datasets.py
-# # 2. preprocess\check_nnunet_masks.py
-# # 3. run_models\run_nnunetv2_2d_all.py
-# # 4. run_models\predict_nnunetv2_2d_all.py
-# # 5. src\runners\evaluate_nnunetv2_predictions.py
-# # 6. run_models\visualize_nnunetv2_2d_all.py
-#
-# '''
+##########################################################
+# Run order:
+
+# 1. preprocess\prepare_nnunetv2_datasets.py
+# 2. preprocess\check_nnunet_masks.py
+# 3. run_models\run_nnunetv2_2d_all.py
+# 4. run_models\predict_nnunetv2_2d_all.py
+# 5. src\runners\evaluate_nnunetv2_predictions.py
+# 6. run_models\visualize_nnunetv2_2d_all.py
+##########################################################
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -48,6 +47,7 @@ DATASETS = [
 
 CONFIGURATION = "2d"
 FOLD = "0"
+TRAINER = "nnUNetTrainer_100epochs"
 
 
 # Debug: run only GLENDA_clean
@@ -100,6 +100,39 @@ def run_command(command, env):
     if result.returncode != 0:
         raise RuntimeError(
             f"Command failed with exit code {result.returncode}: {' '.join(command)}"
+        )
+
+
+def verify_dataset_json_rgb(dataset_folder: str):
+    dataset_json_path = NNUNET_RAW / dataset_folder / "dataset.json"
+
+    if not dataset_json_path.exists():
+        raise FileNotFoundError(f"dataset.json not found: {dataset_json_path}")
+
+    with open(dataset_json_path, "r", encoding="utf-8") as file:
+        dataset_json = json.load(file)
+
+    channel_names = dataset_json.get("channel_names", {})
+    num_channels = len(channel_names)
+
+    print("\n" + "=" * 100)
+    print(f"Checking dataset.json: {dataset_json_path}")
+    print(f"channel_names: {channel_names}")
+    print(f"num_channels: {num_channels}")
+    print(f"reader/writer: {dataset_json.get('overwrite_image_reader_writer')}")
+    print("=" * 100)
+
+    if num_channels != 3:
+        raise RuntimeError(
+            "This dataset is still configured as non-RGB. "
+            f"Expected 3 channels but got {num_channels}. "
+            f"Fix this file: {dataset_json_path}"
+        )
+
+    if dataset_json.get("overwrite_image_reader_writer") != "NaturalImage2DIO":
+        raise RuntimeError(
+            "dataset.json must use NaturalImage2DIO for PNG images. "
+            f"Fix this file: {dataset_json_path}"
         )
 
 
@@ -182,6 +215,8 @@ def train_dataset(dataset_id: int, env):
             str(dataset_id),
             CONFIGURATION,
             FOLD,
+            "-tr",
+            TRAINER,
         ],
         env=env,
     )
@@ -191,10 +226,13 @@ def main():
     env = get_nnunet_environment()
 
     print("=" * 100)
-    print("Planning and preprocessing nnU-Net v2 datasets")
+    print(f"Planning and preprocessing nnU-Net v2 datasets")
+    print(f"Trainer for training: {TRAINER}")
     print("=" * 100)
 
     for dataset_cfg in DATASETS:
+        verify_dataset_json_rgb(dataset_cfg["dataset_folder"])
+
         plan_and_preprocess_dataset(
             dataset_id=dataset_cfg["dataset_id"],
             env=env,
@@ -206,7 +244,7 @@ def main():
         )
 
     print("=" * 100)
-    print("Training nnU-Net v2 2D fold 0")
+    print(f"Training nnU-Net v2 2D fold 0 with {TRAINER}")
     print("=" * 100)
 
     for dataset_cfg in DATASETS:
@@ -215,7 +253,7 @@ def main():
             env=env,
         )
 
-    print("\nAll selected nnU-Net v2 2D trainings finished.")
+    print("\nAll selected nnU-Net v2 2D 100-epoch trainings finished.")
 
 
 if __name__ == "__main__":
