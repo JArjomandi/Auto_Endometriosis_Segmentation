@@ -35,6 +35,7 @@ def find_file_by_root(folder: Path, root_name: str):
             return candidate
 
     matches = []
+
     for extension in IMAGE_EXTENSIONS:
         matches.extend(sorted(folder.glob(f"{root_name}*{extension}")))
 
@@ -105,11 +106,6 @@ def resize_mask_to_image(mask_np: np.ndarray, image_shape):
 
 
 def remove_small_components(mask_np: np.ndarray, min_area_px: int):
-    """
-    Removes connected components smaller than min_area_px.
-    If min_area_px <= 0, returns input mask unchanged.
-    """
-
     mask_np = (mask_np > 0).astype(np.uint8)
 
     if min_area_px <= 0 or mask_np.sum() == 0:
@@ -142,6 +138,7 @@ def mask_to_component_boxes(
     padding_ratio: float = 0.0,
     min_component_area_px: int = 0,
     max_components=None,
+    return_component_masks: bool = False,
 ):
     """
     Converts one SegFormer binary mask into multiple tight boxes.
@@ -153,10 +150,14 @@ def mask_to_component_boxes(
             list of [x_min, y_min, x_max, y_max]
 
         component_mask:
-            binary mask containing the components used for prompting
+            binary mask containing all components used for prompting
 
         component_infos:
             list of dicts with label_id, area, and box info
+
+        component_masks:
+            optional list of exact binary masks, one per connected component.
+            Returned only if return_component_masks=True.
     """
 
     mask_np = resize_mask_to_image(mask_np, image_shape)
@@ -165,6 +166,8 @@ def mask_to_component_boxes(
     image_height, image_width = image_shape[:2]
 
     if mask_np.sum() == 0:
+        if return_component_masks:
+            return [], mask_np, [], []
         return [], mask_np, []
 
     try:
@@ -178,7 +181,12 @@ def mask_to_component_boxes(
     labeled, num_labels = ndimage.label(mask_np)
 
     if num_labels == 0:
-        return [], np.zeros_like(mask_np, dtype=np.uint8), []
+        empty_mask = np.zeros_like(mask_np, dtype=np.uint8)
+
+        if return_component_masks:
+            return [], empty_mask, [], []
+
+        return [], empty_mask, []
 
     component_infos = []
 
@@ -205,16 +213,25 @@ def mask_to_component_boxes(
         total_pad_x = int(padding_px) + ratio_pad_x
         total_pad_y = int(padding_px) + ratio_pad_y
 
-        x_min = max(0, x_min - total_pad_x)
-        y_min = max(0, y_min - total_pad_y)
-        x_max = min(image_width - 1, x_max + total_pad_x)
-        y_max = min(image_height - 1, y_max + total_pad_y)
+        padded_x_min = max(0, x_min - total_pad_x)
+        padded_y_min = max(0, y_min - total_pad_y)
+        padded_x_max = min(image_width - 1, x_max + total_pad_x)
+        padded_y_max = min(image_height - 1, y_max + total_pad_y)
 
-        if x_max <= x_min or y_max <= y_min:
+        if padded_x_max <= padded_x_min or padded_y_max <= padded_y_min:
             continue
 
-        box_xyxy = [x_min, y_min, x_max, y_max]
-        box_area_px = int((x_max - x_min + 1) * (y_max - y_min + 1))
+        box_xyxy = [
+            padded_x_min,
+            padded_y_min,
+            padded_x_max,
+            padded_y_max,
+        ]
+
+        box_area_px = int(
+            (padded_x_max - padded_x_min + 1)
+            * (padded_y_max - padded_y_min + 1)
+        )
 
         component_infos.append(
             {
@@ -222,6 +239,12 @@ def mask_to_component_boxes(
                 "area_px": area_px,
                 "box_xyxy": box_xyxy,
                 "box_area_px": box_area_px,
+                "tight_box_xyxy_without_padding": [
+                    x_min,
+                    y_min,
+                    x_max,
+                    y_max,
+                ],
             }
         )
 
@@ -236,11 +259,23 @@ def mask_to_component_boxes(
 
     filtered_component_mask = np.zeros_like(mask_np, dtype=np.uint8)
     boxes_xyxy = []
+    component_masks = []
 
     for component_info in component_infos:
         label_id = component_info["label_id"]
-        filtered_component_mask[labeled == label_id] = 1
+
+        exact_component_mask = (labeled == label_id).astype(np.uint8)
+
+        filtered_component_mask = np.logical_or(
+            filtered_component_mask > 0,
+            exact_component_mask > 0,
+        ).astype(np.uint8)
+
         boxes_xyxy.append(component_info["box_xyxy"])
+        component_masks.append(exact_component_mask)
+
+    if return_component_masks:
+        return boxes_xyxy, filtered_component_mask, component_infos, component_masks
 
     return boxes_xyxy, filtered_component_mask, component_infos
 
