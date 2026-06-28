@@ -20,7 +20,7 @@ from Hybrid.hybrid_utils import (
     save_rgb_image,
     save_grayscale_uint8,
     save_json,
-    mask_to_tight_box,
+    mask_to_component_boxes,
     compute_binary_metrics,
     make_comparison_overlay,
     Timer,
@@ -77,6 +77,7 @@ TRAINING_STATE_FOLDER = "hybrid"
 PROMPT_MODE_FOLDER = "Auto_box"
 
 
+# Debug mode first. For full run, uncomment GLENDA/GLENDA_clean and set MAX_IMAGES_DEBUG = None.
 DATASETS_TO_RUN = [
     "ENID",
     "GLENDA",
@@ -89,22 +90,21 @@ SPLITS_TO_RUN = [
     "test",
 ]
 
-
-# Set to 5 for first debug run.
-# Set to None for full val/test run.
+# set to e.g 5 for debug run
 MAX_IMAGES_DEBUG = None
 
 
-# Tight prompt settings.
-# For the tightest possible box, keep both values at zero.
+# Multi-lesion prompt settings.
+# Each SegFormer connected component becomes one SurgiSAM2 box prompt.
 BOX_PADDING_PX = 0
 BOX_PADDING_RATIO = 0.0
 
-# Recommended for avoiding huge boxes caused by tiny disconnected false-positive islands.
-BOX_LARGEST_COMPONENT_ONLY = True
-
-# Keep 0 first. Later you may try 20, 50, or 100 if SegFormer produces tiny islands.
+# Start with 0. If too many tiny false-positive boxes appear, try 20, 50, or 100.
 BOX_MIN_COMPONENT_AREA_PX = 0
+
+# None = use all detected SegFormer components.
+# Set to e.g. 5 if you want to limit to the 5 largest components.
+BOX_MAX_COMPONENTS = None
 
 
 SAVE_PROBABILITY_MAPS = False
@@ -131,7 +131,7 @@ def make_output_dirs(dataset_key: str, split_key: str):
         "final_masks": split_output_dir / "merged_masks",
         "final_overlays": split_output_dir / "overlays",
         "segformer_masks": split_output_dir / "segformer_initial_masks",
-        "segformer_prompt_masks": split_output_dir / "segformer_prompt_masks_largest_component",
+        "segformer_prompt_masks": split_output_dir / "segformer_prompt_masks_components",
         "segformer_overlays": split_output_dir / "segformer_initial_overlays",
         "probability_maps": split_output_dir / "segformer_probability_maps",
         "prompts": split_output_dir / "auto_prompts",
@@ -156,8 +156,8 @@ def save_run_config(output_dir: Path):
         "segformer_threshold": SEGFORMER_THRESHOLD,
         "box_padding_px": BOX_PADDING_PX,
         "box_padding_ratio": BOX_PADDING_RATIO,
-        "box_largest_component_only": BOX_LARGEST_COMPONENT_ONLY,
         "box_min_component_area_px": BOX_MIN_COMPONENT_AREA_PX,
+        "box_max_components": BOX_MAX_COMPONENTS,
         "save_probability_maps": SAVE_PROBABILITY_MAPS,
         "device": str(DEVICE),
         "surgisam2_sam2_repo_root": str(SURGISAM2_SAM2_REPO_ROOT),
@@ -173,14 +173,6 @@ def save_run_config(output_dir: Path):
 
     with open(config_path, "w", encoding="utf-8") as file:
         json.dump(config, file, indent=2)
-
-
-def box_area(box_xyxy):
-    if box_xyxy is None:
-        return 0
-
-    x_min, y_min, x_max, y_max = box_xyxy
-    return max(0, x_max - x_min + 1) * max(0, y_max - y_min + 1)
 
 
 # =============================================================================
@@ -250,31 +242,49 @@ def run_dataset_split(
                 )
 
             with Timer() as prompt_timer:
-                box_xyxy, segformer_prompt_mask = mask_to_tight_box(
+                boxes_xyxy, segformer_prompt_mask, component_infos = mask_to_component_boxes(
                     mask_np=segformer_mask,
                     image_shape=image_np.shape,
                     padding_px=BOX_PADDING_PX,
                     padding_ratio=BOX_PADDING_RATIO,
-                    largest_component_only=BOX_LARGEST_COMPONENT_ONLY,
                     min_component_area_px=BOX_MIN_COMPONENT_AREA_PX,
+                    max_components=BOX_MAX_COMPONENTS,
                 )
 
             with Timer() as surgisam2_timer:
-                if box_xyxy is None:
+                if len(boxes_xyxy) == 0:
                     final_mask = np.zeros(image_np.shape[:2], dtype=np.uint8)
-                    surgisam2_score = None
-                    surgisam2_scores_all = None
+                    surgisam2_scores_all_components = []
                     prompt_status = "empty_segformer_mask"
                 else:
-                    final_mask, surgisam2_score, surgisam2_scores_all = predict_surgisam2_from_box(
-                        predictor=surgisam2_predictor,
-                        image_np=image_np,
-                        box_xyxy=box_xyxy,
-                        multimask_output=SURGISAM2_MULTIMASK_OUTPUT,
-                        mask_selection=SURGISAM2_MASK_SELECTION,
-                        use_bfloat16=SURGISAM2_USE_BFLOAT16,
-                    )
-                    prompt_status = "tight_box_prompt_used"
+                    final_mask = np.zeros(image_np.shape[:2], dtype=np.uint8)
+                    surgisam2_scores_all_components = []
+
+                    for component_index, box_xyxy in enumerate(boxes_xyxy, start=1):
+                        component_mask, component_best_score, component_scores_all = predict_surgisam2_from_box(
+                            predictor=surgisam2_predictor,
+                            image_np=image_np,
+                            box_xyxy=box_xyxy,
+                            multimask_output=SURGISAM2_MULTIMASK_OUTPUT,
+                            mask_selection=SURGISAM2_MASK_SELECTION,
+                            use_bfloat16=SURGISAM2_USE_BFLOAT16,
+                        )
+
+                        final_mask = np.logical_or(
+                            final_mask > 0,
+                            component_mask > 0,
+                        ).astype(np.uint8)
+
+                        surgisam2_scores_all_components.append(
+                            {
+                                "component_index": component_index,
+                                "box_xyxy": box_xyxy,
+                                "best_score": component_best_score,
+                                "scores_all": component_scores_all,
+                            }
+                        )
+
+                    prompt_status = "multi_box_prompt_used"
 
         final_metrics = compute_binary_metrics(
             pred_mask=final_mask,
@@ -295,7 +305,7 @@ def run_dataset_split(
             image_np=image_np,
             gt_mask=gt_mask,
             pred_mask=final_mask,
-            box_xyxy=box_xyxy,
+            boxes_xyxy=boxes_xyxy,
             box_color=(180, 0, 255),
             box_width=4,
         )
@@ -304,7 +314,7 @@ def run_dataset_split(
             image_np=image_np,
             gt_mask=gt_mask,
             pred_mask=segformer_mask,
-            box_xyxy=box_xyxy,
+            boxes_xyxy=boxes_xyxy,
             box_color=(180, 0, 255),
             box_width=4,
         )
@@ -338,20 +348,20 @@ def run_dataset_split(
         prompt_data = {
             "image_name": image_path.name,
             "root_name": root_name,
-            "prompt_type": "tight_box",
+            "prompt_type": "multi_tight_box",
             "prompt_status": prompt_status,
-            "box_xyxy": box_xyxy,
-            "box_area_px": box_area(box_xyxy),
+            "boxes_xyxy": boxes_xyxy,
+            "num_boxes": len(boxes_xyxy),
+            "component_infos": component_infos,
             "box_padding_px": BOX_PADDING_PX,
             "box_padding_ratio": BOX_PADDING_RATIO,
-            "box_largest_component_only": BOX_LARGEST_COMPONENT_ONLY,
             "box_min_component_area_px": BOX_MIN_COMPONENT_AREA_PX,
+            "box_max_components": BOX_MAX_COMPONENTS,
             "segformer_pred_area": int((segformer_mask > 0).sum()),
             "segformer_prompt_component_area": int((segformer_prompt_mask > 0).sum()),
             "final_pred_area": int((final_mask > 0).sum()),
             "gt_area": int((gt_mask > 0).sum()),
-            "surgisam2_best_score": surgisam2_score,
-            "surgisam2_scores_all": surgisam2_scores_all,
+            "surgisam2_scores_all_components": surgisam2_scores_all_components,
         }
 
         save_json(prompt_data, prompt_path)
@@ -363,12 +373,10 @@ def run_dataset_split(
             "prediction_name": final_mask_path.name,
             "overlay_name": final_overlay_path.name,
             "prompt_status": prompt_status,
-            "box_xmin": box_xyxy[0] if box_xyxy is not None else "",
-            "box_ymin": box_xyxy[1] if box_xyxy is not None else "",
-            "box_xmax": box_xyxy[2] if box_xyxy is not None else "",
-            "box_ymax": box_xyxy[3] if box_xyxy is not None else "",
-            "box_area_px": box_area(box_xyxy),
-            "surgisam2_best_score": surgisam2_score if surgisam2_score is not None else "",
+            "num_boxes": len(boxes_xyxy),
+            "boxes_xyxy": json.dumps(boxes_xyxy),
+            "component_infos": json.dumps(component_infos),
+            "surgisam2_scores_all_components": json.dumps(surgisam2_scores_all_components),
             "dice": final_metrics["dice"],
             "iou": final_metrics["iou"],
             "precision": final_metrics["precision"],
@@ -398,6 +406,7 @@ def run_dataset_split(
             "segformer_time_sec": segformer_timer.elapsed,
             "prompt_generation_time_sec": prompt_timer.elapsed,
             "surgisam2_time_sec": surgisam2_timer.elapsed,
+            "num_boxes": len(boxes_xyxy),
         }
 
         metric_rows.append(metric_row)
@@ -428,6 +437,7 @@ def run_dataset_split(
         "segformer_prompt_component_iou",
         "segformer_prompt_component_precision",
         "segformer_prompt_component_recall",
+        "num_boxes",
     ]
 
     for metric_name in metric_columns:

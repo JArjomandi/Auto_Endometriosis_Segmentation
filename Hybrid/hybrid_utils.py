@@ -77,6 +77,18 @@ def save_grayscale_uint8(image_np: np.ndarray, output_path: Path):
     Image.fromarray(image_np).save(output_path)
 
 
+def save_rgb_image(image_np: np.ndarray, output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(image_np.astype(np.uint8)).save(output_path)
+
+
+def save_json(data: dict, output_path: Path):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=2)
+
+
 def resize_mask_to_image(mask_np: np.ndarray, image_shape):
     target_height, target_width = image_shape[:2]
 
@@ -92,40 +104,10 @@ def resize_mask_to_image(mask_np: np.ndarray, image_shape):
     return (np.array(mask_image) > 0).astype(np.uint8)
 
 
-def keep_largest_component(mask_np: np.ndarray):
-    """
-    Keeps only the largest connected component in a binary mask.
-
-    Uses scipy if available. If scipy is missing, returns original mask.
-    """
-
-    mask_np = (mask_np > 0).astype(np.uint8)
-
-    if mask_np.sum() == 0:
-        return mask_np
-
-    try:
-        from scipy import ndimage
-    except Exception:
-        return mask_np
-
-    labeled, num_labels = ndimage.label(mask_np)
-
-    if num_labels <= 1:
-        return mask_np
-
-    component_sizes = np.bincount(labeled.ravel())
-    component_sizes[0] = 0
-
-    largest_label = int(component_sizes.argmax())
-
-    return (labeled == largest_label).astype(np.uint8)
-
-
 def remove_small_components(mask_np: np.ndarray, min_area_px: int):
     """
     Removes connected components smaller than min_area_px.
-    If min_area_px <= 0, returns input mask.
+    If min_area_px <= 0, returns input mask unchanged.
     """
 
     mask_np = (mask_np > 0).astype(np.uint8)
@@ -144,7 +126,6 @@ def remove_small_components(mask_np: np.ndarray, min_area_px: int):
         return mask_np
 
     output = np.zeros_like(mask_np, dtype=np.uint8)
-
     component_sizes = np.bincount(labeled.ravel())
 
     for label_id in range(1, num_labels + 1):
@@ -154,55 +135,114 @@ def remove_small_components(mask_np: np.ndarray, min_area_px: int):
     return output
 
 
-def mask_to_tight_box(
+def mask_to_component_boxes(
     mask_np: np.ndarray,
     image_shape,
     padding_px: int = 0,
     padding_ratio: float = 0.0,
-    largest_component_only: bool = True,
     min_component_area_px: int = 0,
+    max_components=None,
 ):
     """
-    Returns tight box in xyxy format: [x_min, y_min, x_max, y_max].
+    Converts one SegFormer binary mask into multiple tight boxes.
 
-    Important:
-    - padding_px=0 and padding_ratio=0.0 means exact tight box around the mask.
-    - largest_component_only=True avoids a tiny false-positive island making the box huge.
+    Each connected component becomes one box.
+
+    Returns:
+        boxes_xyxy:
+            list of [x_min, y_min, x_max, y_max]
+
+        component_mask:
+            binary mask containing the components used for prompting
+
+        component_infos:
+            list of dicts with label_id, area, and box info
     """
 
     mask_np = resize_mask_to_image(mask_np, image_shape)
-    mask_np = remove_small_components(mask_np, min_component_area_px)
-
-    if largest_component_only:
-        mask_np = keep_largest_component(mask_np)
-
-    ys, xs = np.where(mask_np > 0)
-
-    if len(xs) == 0 or len(ys) == 0:
-        return None, mask_np
+    mask_np = (mask_np > 0).astype(np.uint8)
 
     image_height, image_width = image_shape[:2]
 
-    x_min = int(xs.min())
-    x_max = int(xs.max())
-    y_min = int(ys.min())
-    y_max = int(ys.max())
+    if mask_np.sum() == 0:
+        return [], mask_np, []
 
-    ratio_pad_x = int(round(padding_ratio * image_width))
-    ratio_pad_y = int(round(padding_ratio * image_height))
+    try:
+        from scipy import ndimage
+    except Exception as error:
+        raise ImportError(
+            "scipy is required for multi-component box extraction. "
+            "Install it with: pip install scipy"
+        ) from error
 
-    total_pad_x = int(padding_px) + ratio_pad_x
-    total_pad_y = int(padding_px) + ratio_pad_y
+    labeled, num_labels = ndimage.label(mask_np)
 
-    x_min = max(0, x_min - total_pad_x)
-    y_min = max(0, y_min - total_pad_y)
-    x_max = min(image_width - 1, x_max + total_pad_x)
-    y_max = min(image_height - 1, y_max + total_pad_y)
+    if num_labels == 0:
+        return [], np.zeros_like(mask_np, dtype=np.uint8), []
 
-    if x_max <= x_min or y_max <= y_min:
-        return None, mask_np
+    component_infos = []
 
-    return [x_min, y_min, x_max, y_max], mask_np
+    for label_id in range(1, num_labels + 1):
+        component = labeled == label_id
+        area_px = int(component.sum())
+
+        if area_px < min_component_area_px:
+            continue
+
+        ys, xs = np.where(component)
+
+        if len(xs) == 0 or len(ys) == 0:
+            continue
+
+        x_min = int(xs.min())
+        x_max = int(xs.max())
+        y_min = int(ys.min())
+        y_max = int(ys.max())
+
+        ratio_pad_x = int(round(padding_ratio * image_width))
+        ratio_pad_y = int(round(padding_ratio * image_height))
+
+        total_pad_x = int(padding_px) + ratio_pad_x
+        total_pad_y = int(padding_px) + ratio_pad_y
+
+        x_min = max(0, x_min - total_pad_x)
+        y_min = max(0, y_min - total_pad_y)
+        x_max = min(image_width - 1, x_max + total_pad_x)
+        y_max = min(image_height - 1, y_max + total_pad_y)
+
+        if x_max <= x_min or y_max <= y_min:
+            continue
+
+        box_xyxy = [x_min, y_min, x_max, y_max]
+        box_area_px = int((x_max - x_min + 1) * (y_max - y_min + 1))
+
+        component_infos.append(
+            {
+                "label_id": int(label_id),
+                "area_px": area_px,
+                "box_xyxy": box_xyxy,
+                "box_area_px": box_area_px,
+            }
+        )
+
+    component_infos = sorted(
+        component_infos,
+        key=lambda item: item["area_px"],
+        reverse=True,
+    )
+
+    if max_components is not None:
+        component_infos = component_infos[:max_components]
+
+    filtered_component_mask = np.zeros_like(mask_np, dtype=np.uint8)
+    boxes_xyxy = []
+
+    for component_info in component_infos:
+        label_id = component_info["label_id"]
+        filtered_component_mask[labeled == label_id] = 1
+        boxes_xyxy.append(component_info["box_xyxy"])
+
+    return boxes_xyxy, filtered_component_mask, component_infos
 
 
 def compute_binary_metrics(pred_mask: np.ndarray, gt_mask: np.ndarray):
@@ -249,7 +289,7 @@ def make_comparison_overlay(
     gt_mask: np.ndarray,
     pred_mask: np.ndarray,
     alpha: float = 0.55,
-    box_xyxy=None,
+    boxes_xyxy=None,
     box_color=(180, 0, 255),
     box_width: int = 4,
 ):
@@ -257,7 +297,7 @@ def make_comparison_overlay(
     Green  = GT only / missed lesion
     Red    = prediction only / false positive
     Yellow = overlap / true positive
-    Purple box = SegFormer-derived prompt box
+    Purple boxes = SegFormer-derived prompt boxes
     """
 
     gt_mask = resize_mask_to_image(gt_mask, image_np.shape)
@@ -294,38 +334,27 @@ def make_comparison_overlay(
 
     overlay = np.clip(overlay, 0, 255).astype(np.uint8)
 
-    if box_xyxy is not None:
+    if boxes_xyxy is not None and len(boxes_xyxy) > 0:
         overlay_pil = Image.fromarray(overlay)
         draw = ImageDraw.Draw(overlay_pil)
 
-        x_min, y_min, x_max, y_max = [int(v) for v in box_xyxy]
+        for current_box in boxes_xyxy:
+            x_min, y_min, x_max, y_max = [int(v) for v in current_box]
 
-        for offset in range(box_width):
-            draw.rectangle(
-                [
-                    x_min - offset,
-                    y_min - offset,
-                    x_max + offset,
-                    y_max + offset,
-                ],
-                outline=tuple(box_color),
-            )
+            for offset in range(box_width):
+                draw.rectangle(
+                    [
+                        x_min - offset,
+                        y_min - offset,
+                        x_max + offset,
+                        y_max + offset,
+                    ],
+                    outline=tuple(box_color),
+                )
 
         overlay = np.array(overlay_pil)
 
     return overlay
-
-
-def save_rgb_image(image_np: np.ndarray, output_path: Path):
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(image_np.astype(np.uint8)).save(output_path)
-
-
-def save_json(data: dict, output_path: Path):
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(output_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
 
 
 class Timer:
