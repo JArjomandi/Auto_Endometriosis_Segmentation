@@ -166,14 +166,14 @@ DPI = 600
 FIG_WIDTH = 9.8
 FIG_HEIGHT = 5.4
 
-TITLE_FONT_SIZE = 15
-AXIS_FONT_SIZE = 14
+TITLE_FONT_SIZE = 14
+AXIS_FONT_SIZE = 13
 
 # Main prompt tick labels: smaller but bold
 TICK_FONT_SIZE = 13
 
 # Skewed model labels under each box
-MODEL_LABEL_FONT_SIZE = 14
+MODEL_LABEL_FONT_SIZE = 12
 
 # Compact prompt groups, with slight white space between boxes
 BOX_WIDTH = 0.095
